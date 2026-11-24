@@ -210,7 +210,7 @@ export function pavingTexture() {
 const FACADE_BASES = ['#2e3a52', '#3a2e4a', '#27313f', '#40364a', '#2a4048', '#4a3040', '#35424e'];
 const LIT_COLORS = ['#ffd9a0', '#ffb35e', '#9fe8ff', '#57d7e8', '#ffe9f4', '#cfe3f2'];
 
-export function facadeTexture(variant, litRatio = 0.45) {
+export function facadeTexture(variant, litRatio = 0.70) {
   const base = FACADE_BASES[variant % FACADE_BASES.length];
   return canvasTex(256, 256, (g) => {
     g.fillStyle = base; g.fillRect(0, 0, 256, 256);
@@ -242,7 +242,7 @@ export function facadeTexture(variant, litRatio = 0.45) {
         const lit = Math.random() < litRatio;
         if (lit) {
           g.fillStyle = pick(LIT_COLORS);
-          g.globalAlpha = 0.55 + Math.random() * 0.45;
+          g.globalAlpha = 0.78 + Math.random() * 0.22;
         } else {
           g.fillStyle = '#131a29';
           g.globalAlpha = 1;
@@ -348,7 +348,7 @@ const _facadeMats = [];
 export function ensureFacadeMats() {
   if (_facadeMats.length) return _facadeMats;
   for (let v = 0; v < 6; v++) {
-    const tex = facadeTexture(v, 0.45);
+    const tex = facadeTexture(v, 0.70);
     _facadeMats.push(new THREE.MeshLambertMaterial({ map: tex }));
   }
   return _facadeMats;
@@ -467,20 +467,20 @@ export function addBuilding(scene, cx, cz, w, d, h, opts = {}) {
 }
 
 const _lampPoleMat = new THREE.MeshLambertMaterial({ color: 0x232830 });
-const _lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
+const _lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffedb8 });
 
 export function addLamp(scene, x, z) {
   const grp = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 5.6, 6), _lampPoleMat);
   pole.position.y = 2.8;
   grp.add(pole);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), _lampHeadMat);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 6), _lampHeadMat);
   head.position.y = 5.7;
   grp.add(head);
   grp.position.set(x, 0, z);
   scene.add(grp);
-  addGlowSprite(scene, x, 5.7, z, 3.4, 0xffc98a);
-  addLightPool(scene, x, z, 5.2);
+  addGlowSprite(scene, x, 5.7, z, 5.4, 0xffd9a0);
+  addLightPool(scene, x, z, 6.4);
   props.push({ x, z, r: 0.35 });
   return grp;
 }
@@ -521,6 +521,27 @@ export function addStall(scene, x, z, rotY, ci) {
     bulb.position.set(-1.6 + i * 0.8, 2.45, 1.05);
     grp.add(bulb);
   }
+  // Stall lamp (owner, rev 12): one warm amber lantern hung centre under
+  // the canopy — emissive bulb + additive glow sprite + a fake light pool
+  // on the counter. No real PointLight: the night stays cheap to render.
+  const lampBulb = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffc27a }));
+  lampBulb.position.set(0, 2.3, 0.55);
+  grp.add(lampBulb);
+  const lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture('rgba(255,178,92,0.6)'), transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  lampGlow.position.set(0, 2.3, 0.55);
+  lampGlow.scale.set(2.6, 2.6, 1);
+  grp.add(lampGlow);
+  const lampPool = new THREE.Mesh(
+    new THREE.CircleGeometry(1.45, 18),
+    new THREE.MeshBasicMaterial({ map: glowTexture('rgba(255,178,92,0.55)'), transparent: true, depthWrite: false, opacity: 0.5 })
+  );
+  lampPool.rotation.x = -Math.PI / 2;
+  lampPool.position.set(0, 1.04, 0.35);
+  grp.add(lampPool);
   grp.position.set(x, 0, z);
   grp.rotation.y = rotY;
   scene.add(grp);

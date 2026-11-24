@@ -194,6 +194,11 @@ function updateDriving(dt) {
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
+  // Title state only (owner, rev 12): the aerial city behind the logo reads
+  // dark at the gameplay exposure, so the un-started title renders hotter.
+  // Set deterministically from state every frame — the moment the game
+  // starts (and in shot mode) the exposure is the gameplay 1.12 again.
+  G.renderer.toneMappingExposure = G.started ? 1.12 : 1.80;
   // dt is clamped to 50 ms: a hitched frame slows the sim down instead of
   // teleporting it — collision steps stay tunnel-proof at any frame rate.
   let dt = Math.min(0.05, (now - last) / 1000);
