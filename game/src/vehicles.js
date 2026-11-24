@@ -1,6 +1,9 @@
 // vehicles.js — the car factory. Dimensions are the approved table from
-// the Bahia Heat data: body, glass cabin and roof are built to the same
-// centimetres so silhouettes read identically under the neon.
+// the Bahia Heat data: overall length, width, beltline and roof heights
+// are built to the same centimetres so placements read identically under
+// the neon — but the bodywork itself is shaped, not stacked: a full-width
+// lower hull, a narrower shoulder deck, sloped hood/trunk lids and a
+// raked greenhouse under a tapered roof.
 
 import { rand, pick, clamp, collideCircleOBB } from './util.js';
 import { glowTexture, queryWorld } from './city.js';
@@ -11,6 +14,17 @@ export const CAR_TYPES = {
   taxi:   { name: 'Taxi Noche',     L: 4.4, W: 1.9,  H: 0.62, cabinH: 0.58, colors: [0xffb340], topSpeed: 33, accel: 11, grip: 3.2 },
   truck:  { name: 'Mulo Truck',     L: 5.8, W: 2.2,  H: 0.9,  cabinH: 0.8,  colors: [0xb08954, 0x7a8a99, 0x54804e, 0xd84a30], topSpeed: 27, accel: 8, grip: 2.8 },
   cruiser:{ name: 'PDP Interceptor', L: 4.6, W: 1.95, H: 0.6,  cabinH: 0.55, colors: [0xf2f2f2], topSpeed: 44, accel: 16, grip: 3.6 },
+};
+
+// Silhouette profiles per car type (fractions of L unless noted): hood
+// length, windshield/rear-glass rake in radians, cabin length/width and
+// roof width, cabin centre offset. Sport sits lower with a longer hood, a
+// harder rake and a rear wing; the cruiser is a sedan with a longer nose.
+const CAR_SHAPES = {
+  sedan:   { hood: 0.25, rake: 0.60, rearRake: 0.52, cabLen: 0.40, cabW: 0.80, roofW: 0.66, cabZ: -0.04, spoiler: false },
+  sport:   { hood: 0.31, rake: 0.74, rearRake: 0.60, cabLen: 0.36, cabW: 0.78, roofW: 0.62, cabZ: -0.10, spoiler: true },
+  taxi:    { hood: 0.25, rake: 0.60, rearRake: 0.52, cabLen: 0.40, cabW: 0.80, roofW: 0.66, cabZ: -0.04, spoiler: false },
+  cruiser: { hood: 0.27, rake: 0.58, rearRake: 0.50, cabLen: 0.40, cabW: 0.80, roofW: 0.66, cabZ: -0.04, spoiler: false },
 };
 
 let _wheelGeo = null;
@@ -44,15 +58,89 @@ export function makeCar(typeKey, colorHex, opts = {}) {
     color: new THREE.Color(color).multiplyScalar(0.72),
   });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(t.W, t.H, t.L), bodyMat);
-  body.position.y = 0.36 + t.H / 2;
-  grp.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.82, t.cabinH, t.L * 0.46), _glassMat);
-  cabin.position.set(0, 0.36 + t.H + t.cabinH / 2 - 0.04, -t.L * 0.04);
-  grp.add(cabin);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.8, 0.07, t.L * 0.4), roofMat);
-  roof.position.set(0, 0.36 + t.H + t.cabinH + 0.015, -t.L * 0.04);
-  grp.add(roof);
+  // ---- Silhouette -------------------------------------------------------
+  // The old build was three stacked slabs (body, glass box, roof) and read
+  // as a toy block up close. Overall length, width, beltline and roof
+  // heights stay the approved table's, so colliders, staged placements and
+  // lamp positions are untouched — only the bodywork between them changes.
+  const y0 = 0.36;
+  const bodyTop = y0 + t.H;
+  let mirrorZ = t.L * 0.14;
+  let mirrorY = bodyTop + t.cabinH * 0.3;
+  if (typeKey === 'truck') {
+    // Mulo: chassis, a cab with a gently raked windshield, and a tall
+    // cargo box behind a short gap — no more glass slab amidships.
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(t.W, t.H * 0.5, t.L), bodyMat);
+    chassis.position.y = y0 + t.H * 0.25;
+    grp.add(chassis);
+    const cabBase = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.97, 0.52, 1.95), bodyMat);
+    cabBase.position.set(0, y0 + t.H * 0.5 + 0.26, t.L / 2 - 0.98);
+    grp.add(cabBase);
+    const cabGlass = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.9, 0.5, 1.45), _glassMat);
+    cabGlass.position.set(0, y0 + t.H * 0.5 + 0.77, t.L / 2 - 1.08);
+    grp.add(cabGlass);
+    const cabShield = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.88, 0.66, 0.05), _glassMat);
+    cabShield.rotation.x = -0.22;
+    cabShield.position.set(0, y0 + t.H * 0.5 + 0.77, t.L / 2 - 0.34);
+    grp.add(cabShield);
+    const cabRoof = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.9, 0.07, 1.5), roofMat);
+    cabRoof.position.set(0, y0 + t.H * 0.5 + 1.035, t.L / 2 - 1.12);
+    grp.add(cabRoof);
+    const cargo = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.99, 1.32, t.L * 0.54), roofMat);
+    cargo.position.set(0, y0 + t.H * 0.5 + 0.66, -t.L / 2 + t.L * 0.27);
+    grp.add(cargo);
+    mirrorZ = t.L * 0.36;
+    mirrorY = y0 + t.H * 0.5 + 0.62;
+  } else {
+    const S = CAR_SHAPES[typeKey];
+    const cabLen = t.L * S.cabLen, cabW = t.W * S.cabW, cabZ = t.L * S.cabZ;
+    const cabFront = cabZ + cabLen / 2, cabRear = cabZ - cabLen / 2;
+    // Full-width lower hull; the narrower deck above it steps in over the
+    // wheels, which reads as the fender/shoulder line.
+    const lower = new THREE.Mesh(new THREE.BoxGeometry(t.W, t.H * 0.68, t.L), bodyMat);
+    lower.position.y = y0 + t.H * 0.34;
+    grp.add(lower);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.93, t.H * 0.38, t.L * 0.9), bodyMat);
+    deck.position.set(0, y0 + t.H * 0.87 - 0.03, -t.L * 0.02);
+    grp.add(deck);
+    // Sloped hood and trunk lids, pitched down toward the ends.
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.9, 0.09, t.L * S.hood + 0.3), bodyMat);
+    hood.rotation.x = 0.17;
+    hood.position.set(0, bodyTop - 0.05, t.L / 2 - (t.L * S.hood) / 2 + 0.04);
+    grp.add(hood);
+    const trunk = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.9, 0.09, t.L * 0.16 + 0.26), bodyMat);
+    trunk.rotation.x = -0.13;
+    trunk.position.set(0, bodyTop - 0.045, -t.L / 2 + t.L * 0.08 - 0.04);
+    grp.add(trunk);
+    // Greenhouse: glass core, raked windshield and rear glass, and a roof
+    // narrower than the glass so the cabin tapers as it rises.
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(cabW, t.cabinH * 0.94, cabLen), _glassMat);
+    glass.position.set(0, bodyTop + t.cabinH / 2 - 0.05, cabZ);
+    grp.add(glass);
+    const shield = new THREE.Mesh(new THREE.BoxGeometry(cabW * 0.97, t.cabinH * 1.32, 0.05), _glassMat);
+    shield.rotation.x = -S.rake;
+    shield.position.set(0, bodyTop + t.cabinH * 0.5, cabFront + Math.tan(S.rake) * t.cabinH * 0.1);
+    grp.add(shield);
+    const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(cabW * 0.97, t.cabinH * 1.24, 0.05), _glassMat);
+    rearGlass.rotation.x = S.rearRake;
+    rearGlass.position.set(0, bodyTop + t.cabinH * 0.5, cabRear - Math.tan(S.rearRake) * t.cabinH * 0.1);
+    grp.add(rearGlass);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(t.W * S.roofW, 0.07, cabLen * 0.78), roofMat);
+    roof.position.set(0, bodyTop + t.cabinH + 0.015, cabZ - t.L * 0.01);
+    grp.add(roof);
+    if (S.spoiler) {
+      for (const sx of [-t.W * 0.27, t.W * 0.27]) {
+        const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.13, 0.06), _darkMat);
+        strut.position.set(sx, bodyTop + 0.02, -t.L / 2 + 0.32);
+        grp.add(strut);
+      }
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.74, 0.045, 0.32), _darkMat);
+      wing.rotation.x = -0.07;
+      wing.position.set(0, bodyTop + 0.1, -t.L / 2 + 0.3);
+      grp.add(wing);
+    }
+    mirrorZ = cabFront - 0.06;
+  }
   if (opts.detail) {
     // Grille + wing mirrors for the cars the camera gets close to
     // (traffic, police, mission and staged cars — not the parked rows).
@@ -61,7 +149,7 @@ export function makeCar(typeKey, colorHex, opts = {}) {
     grp.add(grille);
     for (const mx of [-t.W / 2 - 0.07, t.W / 2 + 0.07]) {
       const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.13, 0.16), bodyMat);
-      mirror.position.set(mx, 0.36 + t.H + t.cabinH * 0.55, t.L * 0.14);
+      mirror.position.set(mx, mirrorY, mirrorZ);
       grp.add(mirror);
     }
   }
@@ -131,12 +219,6 @@ export function makeCar(typeKey, colorHex, opts = {}) {
     stripe.position.y = 0.36 + t.H * 0.55;
     grp.add(stripe);
   }
-  if (typeKey === 'truck') {
-    const bed = new THREE.Mesh(new THREE.BoxGeometry(t.W * 0.94, 0.5, t.L * 0.4), _darkMat);
-    bed.position.set(0, 0.36 + t.H + 0.1, -t.L * 0.26);
-    grp.add(bed);
-  }
-
   const car = {
     group: grp, type: typeKey, spec: t, color,
     x: 0, z: 0, angle: 0, speed: 0, steer: 0,

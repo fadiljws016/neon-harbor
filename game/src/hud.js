@@ -20,6 +20,8 @@ export function toast(text) { (G.toastQueue ||= []).push(text); }
 export function initHUD() {
   const ids = ['mission-panel', 'mission-title', 'mission-stage', 'mission-objective', 'mission-next',
     'mission-timer', 'cash', 'respect', 'rank', 'clock', 'stars', 'radio', 'health-fill', 'armor-fill',
+    'health-num', 'armor-num', 'curweapon', 'cw-name', 'cw-ammo', 'vehicle', 'veh-name', 'veh-health-fill',
+    'district-top',
     'weapons', 'dispatch', 'dialogue', 'dialogue-name', 'dialogue-text', 'speedo', 'district',
     'toasts', 'vignette', 'banner', 'minimap', 'wanted-label', 'start-screen',
     'mapOverlay', 'mapCanvas', 'mmcTitle', 'mmcStage', 'mmcGiver', 'mmcObj', 'mmcNext',
@@ -144,15 +146,23 @@ export function updateHUD(dt) {
   el['radio'].textContent = G.radio + ' · "' + G.radioTrack + '"';
   el['health-fill'].style.width = Math.max(0, G.health) + '%';
   el['armor-fill'].style.width = Math.max(0, G.armor) + '%';
+  el['health-num'].textContent = String(Math.max(0, Math.round(G.health)));
+  el['health-num'].style.color = G.health < 35 ? '#ff5147' : '';
+  el['armor-num'].textContent = String(Math.max(0, Math.round(G.armor)));
   el['district'].textContent = G.district.toUpperCase();
+  // Top-right readout also names the district, computed live from the
+  // player/car position like the map strip does.
+  const hpp = G.playerCar ? G.playerCar.group.position : (G.player ? G.player.group.position : null);
+  el['district-top'].textContent = (hpp ? districtAt(hpp.x, hpp.z).name : G.district).toUpperCase();
 
   const wStars = Math.round(G.wanted);
   if (wStars !== lastStars) {
     lastStars = wStars;
     el['stars'].innerHTML = starsHTML();
   }
-  el['wanted-label'].textContent =
-    G.wanted >= 4 ? 'HUNTED' : G.wanted >= 2.5 ? 'TRACKING' : G.wanted >= 1 ? 'SEARCHING' : '';
+  const wLabel = G.wanted >= 4 ? 'HUNTED' : G.wanted >= 2.5 ? 'TRACKING' : G.wanted >= 1 ? 'SEARCHING' : '';
+  el['wanted-label'].textContent = wLabel
+    ? wLabel + ' · ' + G.wanted.toFixed(1) : '';
 
   // Mission panel.
   const info = missionPanelInfo();
@@ -184,6 +194,14 @@ export function updateHUD(dt) {
     else ammoEl.textContent = String(G.ammo[w.id] ?? 0);
   });
 
+  // Current-weapon panel: the drawn weapon, big, with its live ammo pool
+  // (fists have no pool — bare hands, endless by definition).
+  const cw = currentWeapon();
+  el['cw-name'].textContent = cw.name;
+  el['cw-ammo'].innerHTML = cw.id === 'fists'
+    ? 'BARE HANDS · ∞'
+    : 'AMMO <b>' + String(G.ammo[cw.id] ?? 0) + '</b>';
+
   // Dispatch board (top five nearest units, unique ids by construction).
   if (dispatch.length) {
     el['dispatch'].style.display = 'block';
@@ -207,12 +225,18 @@ export function updateHUD(dt) {
     }
   } else el['dialogue'].style.display = 'none';
 
-  // Speedo.
+  // Vehicle panel (driving only): car name, big speedo, hull health bar.
   if (G.playerCar) {
+    el['vehicle'].style.display = 'block';
+    el['veh-name'].textContent = G.playerCar.spec.name.toUpperCase();
+    el['veh-health-fill'].style.width = Math.max(0, G.playerCar.health) + '%';
     el['speedo'].style.display = 'block';
     el['speedo'].innerHTML = Math.round(Math.abs(G.playerCar.speed) * 3.6) +
       ' <span class="unit">km/h</span>';
-  } else el['speedo'].style.display = 'none';
+  } else {
+    el['vehicle'].style.display = 'none';
+    el['speedo'].style.display = 'none';
+  }
 
   // Maps: the hub overlay takes the screen and the in-game HUD hides so
   // nothing ghosts through it (body.map-open CSS in index.html).

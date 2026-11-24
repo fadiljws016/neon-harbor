@@ -47,12 +47,24 @@
   #minimap { border-radius: 50%; display: block; }
   #district { font-size: 11px; letter-spacing: 2.6px; color: #eaf4ff; margin-top: 5px;
     text-shadow: 0 1px 6px #000; }
-  #bars { position: fixed; right: 16px; bottom: 86px; width: 252px; z-index: 5; }
+  #bars { position: fixed; right: 16px; bottom: 86px; width: 252px; z-index: 5; padding: 9px 12px; }
   .bar-label { font-size: 9.5px; letter-spacing: 2px; color: #b8c9de; text-align: right; margin: 3px 0 2px; }
+  .bar-num { color: #fff; font-weight: 800; font-size: 11px; letter-spacing: 0.5px; margin-left: 6px; }
   .bar { height: 8px; background: rgba(255, 255, 255, 0.12); border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; border-radius: 4px; transition: width 0.25s; }
   #health-fill { background: linear-gradient(90deg, #ff5147, #ffb35e); width: 100%; }
   #armor-fill { background: #57d7e8; width: 0%; }
+  #district-top { font-size: 11px; letter-spacing: 2.4px; color: #57d7e8; font-weight: 700; margin-top: 3px; }
+  #curweapon { position: fixed; right: 16px; bottom: 158px; width: 252px; z-index: 5;
+    padding: 9px 14px; text-align: right; }
+  .cw-label { font-size: 9.5px; letter-spacing: 2.4px; color: #57d7e8; }
+  #cw-name { font-size: 16.5px; font-weight: 800; color: #fff; line-height: 1.2; }
+  #cw-ammo { font-size: 12px; color: #ffd23e; letter-spacing: 0.6px; }
+  #cw-ammo b { font-size: 14px; }
+  #vehicle { position: fixed; right: 16px; bottom: 238px; width: 252px; z-index: 5;
+    padding: 10px 14px; text-align: right; }
+  #veh-name { font-size: 13px; font-weight: 700; letter-spacing: 1.2px; color: #fff; }
+  #veh-health-fill { background: linear-gradient(90deg, #57d7e8, #3effa0); width: 100%; }
   #weapons { position: fixed; right: 16px; bottom: 16px; display: flex; gap: 7px; z-index: 5; }
   .weapon-slot { width: 86px; padding: 7px 9px; border-radius: 8px; background: rgba(8, 13, 26, 0.72);
     border: 1px solid rgba(255, 255, 255, 0.14); }
@@ -68,8 +80,7 @@
   #dialogue-name { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   #dialogue-text { font-size: 14.5px; line-height: 1.4; }
   #dialogue-key { font-size: 10.5px; letter-spacing: 1.6px; color: #ffd23e; margin-top: 5px; }
-  #speedo { position: fixed; right: 22px; bottom: 150px; font-size: 30px; font-weight: 800; z-index: 5;
-    display: none; text-shadow: 0 2px 10px #000; }
+  #speedo { font-size: 30px; font-weight: 800; display: none; text-shadow: 0 2px 10px #000; line-height: 1.1; }
   #speedo .unit { font-size: 13px; color: #9fc4e8; }
   #toasts { position: fixed; top: 120px; left: 50%; transform: translateX(-50%); z-index: 7;
     display: flex; flex-direction: column; align-items: center; gap: 6px; }
@@ -90,7 +101,8 @@
   #mapOverlay.open { display: block; }
   body.map-open #mission-panel, body.map-open #status, body.map-open #dispatch,
   body.map-open #minimap-wrap, body.map-open #bars, body.map-open #weapons,
-  body.map-open #speedo, body.map-open #dialogue, body.map-open #toasts,
+  body.map-open #speedo, body.map-open #curweapon, body.map-open #vehicle,
+  body.map-open #dialogue, body.map-open #toasts,
   body.map-open #banner, body.map-open #vignette { display: none !important; }
   .mapHeader { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px 8px; }
   .mapTitle { font-size: 25px; font-weight: 800; letter-spacing: 5px; color: #eaf4ff; text-shadow: 0 0 14px rgba(87,215,232,0.6); }
@@ -135,7 +147,8 @@
   /* Title screen: the live aerial city shows through; the overlay only
      shades the top (logo) and bottom (controls) bands for legibility. */
   body:not(.started) #status, body:not(.started) #minimap-wrap,
-  body:not(.started) #bars, body:not(.started) #weapons { display: none !important; }
+  body:not(.started) #bars, body:not(.started) #weapons,
+  body:not(.started) #curweapon, body:not(.started) #vehicle { display: none !important; }
   #start-screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
     align-items: center; justify-content: center; cursor: pointer;
     background: linear-gradient(180deg, rgba(3, 6, 14, 0.55) 0%, rgba(3, 6, 14, 0.08) 30%,
@@ -175,6 +188,7 @@
   <div id="rank-line"><span id="rank">Runner</span> · <span id="respect">Respect 40</span></div>
   <div id="stars"></div>
   <div id="wanted-label"></div>
+  <div id="district-top">LA FRANJA</div>
   <div id="radio">Radio Noche 101.7</div>
 </div>
 
@@ -185,15 +199,27 @@
   <div id="district">LA FRANJA</div>
 </div>
 
-<div id="bars">
-  <div class="bar-label">HEALTH</div>
+<div id="bars" class="glass">
+  <div class="bar-label">HEALTH<span class="bar-num" id="health-num">100</span></div>
   <div class="bar"><div id="health-fill"></div></div>
-  <div class="bar-label">ARMOR</div>
+  <div class="bar-label">ARMOR<span class="bar-num" id="armor-num">0</span></div>
   <div class="bar"><div id="armor-fill"></div></div>
 </div>
 
 <div id="weapons"></div>
-<div id="speedo"></div>
+
+<div id="curweapon" class="glass">
+  <div class="cw-label">WEAPON</div>
+  <div id="cw-name">P-9 Pistol</div>
+  <div id="cw-ammo"></div>
+</div>
+
+<div id="vehicle" class="glass" style="display:none">
+  <div id="veh-name">Volt GT</div>
+  <div id="speedo"></div>
+  <div class="bar-label">VEHICLE</div>
+  <div class="bar"><div id="veh-health-fill"></div></div>
+</div>
 
 <div id="dialogue" class="glass">
   <div id="dialogue-avatar">RR</div>
