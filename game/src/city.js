@@ -1043,6 +1043,7 @@ function buildLandmarks(scene) {
 export function initCity(scene) {
   colliders.length = 0;
   props.length = 0;
+  _grid = null; // the broadphase must rebuild over the fresh registries
   buildGroundAndRoads(scene);
   buildBlocks(scene);
   buildMarketStrip(scene);

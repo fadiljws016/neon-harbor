@@ -156,6 +156,10 @@ let chaseStarTex = null;
 let streakGeo = null, streakMat = null;
 let streakCoreGeo = null, streakCoreMat = null;
 const chaseStreaks = [];
+// Live-streak ceiling for the staged chase FX: the volley's density
+// keeps ~10 aloft at once, so this is recycling headroom, never a
+// throttle — past it the oldest streak is retired early.
+const MAX_CHASE_STREAKS = 48;
 
 function chaseStarTexture() {
   const cv = document.createElement('canvas');
@@ -195,7 +199,7 @@ function spawnChaseStreak(from, hit) {
     streakCoreGeo = new THREE.BoxGeometry(0.014, 0.014, 2.6);
     streakCoreMat = new THREE.MeshBasicMaterial({ color: 0xffa200, transparent: true, opacity: 1 });
   }
-  if (chaseStreaks.length > 48) {
+  if (chaseStreaks.length > MAX_CHASE_STREAKS) {
     const old = chaseStreaks.shift();
     G.scene.remove(old.mesh);
   }

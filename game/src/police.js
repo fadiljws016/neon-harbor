@@ -65,8 +65,11 @@ export function updatePolice(dt) {
     if (car.dead) continue;
     if (car.group.userData.lightBar) {
       const bar = car.group.userData.lightBar;
-      bar.children[0].material.color.setHex(G.t % 0.5 < 0.25 ? 0xff5050 : 0x551114);
-      bar.children[1].material.color.setHex(G.t % 0.5 < 0.25 ? 0x112a55 : 0x4d8dff);
+      // One phase for both lamps: red lit on the first half-period,
+      // blue on the second — computed once so they can never desync.
+      const redPhase = G.t % 0.5 < 0.25;
+      bar.children[0].material.color.setHex(redPhase ? 0xff5050 : 0x551114);
+      bar.children[1].material.color.setHex(redPhase ? 0x112a55 : 0x4d8dff);
     }
     if (car.role === 'roadblock') continue;
     const d = dist2d(car.x, car.z, target.x, target.z);

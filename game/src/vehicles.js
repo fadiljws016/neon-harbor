@@ -157,12 +157,16 @@ export function carOBB(car) {
   return { x: car.x, z: car.z, hw: car.spec.W / 2, hd: car.spec.L / 2, rot: car.angle };
 }
 
+// Stamping the brake from speed scrubs BRAKE_DECEL m/s² — far harder
+// than the gentle reverse-throttle creep used once nearly stopped.
+const BRAKE_DECEL = 22;
+
 // Simple arcade drive step shared by the player car, traffic and police.
 export function driveStep(car, dt, throttle, steerTarget) {
   const t = car.spec;
   car.steer += (steerTarget - car.steer) * Math.min(1, dt * 7);
   if (throttle > 0) car.speed += t.accel * throttle * dt;
-  else if (throttle < 0) car.speed += (car.speed > 0.5 ? -22 : t.accel * 0.55 * throttle) * dt;
+  else if (throttle < 0) car.speed += (car.speed > 0.5 ? -BRAKE_DECEL : t.accel * 0.55 * throttle) * dt;
   else car.speed -= car.speed * Math.min(1, dt * 0.7);
   car.speed -= car.speed * Math.abs(car.steer) * dt * 0.4;
   car.speed = Math.max(-t.topSpeed * 0.35, Math.min(t.topSpeed, car.speed));

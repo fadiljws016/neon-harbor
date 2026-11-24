@@ -4,7 +4,7 @@
 import { G } from './state.js';
 import { rand, dist2d, angleTo, angleLerp } from './util.js';
 import { makePerson, poseStand, poseChat, poseSurrender, poseDown, animatePerson } from './people.js';
-import { nearestRoadPoint } from './city.js';
+import { nearestRoadPoint, DISTRICTS } from './city.js';
 import { collideWorld } from './player.js';
 
 export const peds = [];
@@ -36,6 +36,26 @@ export function crowd(x, z, n, r = 8) {
     const d = rand(1, r);
     made.push(spawnPedestrian(x + Math.cos(a) * d, z + Math.sin(a) * d,
       { mode: Math.random() < 0.4 ? 'chat' : 'wander' }));
+  }
+  return made;
+}
+
+// City-wide population pass: seed every district with its own wanderers
+// and stall browsers, snapped to that district's roads, so the whole map
+// has people on its sidewalks — not just the streets near the spawn.
+// Counts are keyed by district name; districts missing from the table
+// get none.
+export function populateDistricts(counts) {
+  const made = [];
+  for (const d of DISTRICTS) {
+    const n = counts[d.name] || 0;
+    for (let i = 0; i < n; i++) {
+      const near = nearestRoadPoint(rand(d.x0 + 16, d.x1 - 16), rand(d.z0 + 16, d.z1 - 16));
+      const browse = Math.random() < 0.18;
+      const x = Math.min(d.x1 - 3, Math.max(d.x0 + 3, near.x + rand(-2.5, 2.5)));
+      const z = Math.min(d.z1 - 3, Math.max(d.z0 + 3, near.z + rand(-2.5, 2.5)));
+      made.push(spawnPedestrian(x, z, { mode: browse ? 'browse' : 'wander' }));
+    }
   }
   return made;
 }

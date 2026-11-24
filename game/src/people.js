@@ -230,8 +230,10 @@ export function animatePerson(p, dt, speed) {
     }
     p.group.position.y = p.baseY + Math.abs(Math.sin(p.walkPhase)) * 0.05;
   } else if (p.pose === 'stand') {
-    // Idle breath.
-    const b = Math.sin(p.walkPhase + dt * 1.7) * 0.02;
+    // Idle breath: advance the phase itself — adding dt inside the sin()
+    // argument never accumulated, so the sway used to sit almost frozen.
+    p.walkPhase += dt * 1.7;
+    const b = Math.sin(p.walkPhase) * 0.02;
     p.armL.rotation.x = b; p.armR.rotation.x = -b;
   }
 }

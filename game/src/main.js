@@ -8,7 +8,7 @@ import { initEffects, updateEffects } from './effects.js';
 import { initHeli, updateHeli } from './helicopter.js';
 import { createPlayer, updatePlayer, setPlayerWeaponMesh, collideWorld } from './player.js';
 import { initTraffic, updateTraffic, allCars } from './traffic.js';
-import { spawnPedestrian, crowd, updatePedestrians } from './pedestrians.js';
+import { spawnPedestrian, crowd, populateDistricts, updatePedestrians } from './pedestrians.js';
 import { updatePolice, policeCars } from './police.js';
 import { updateOfficers } from './officers.js';
 import { updateHostiles, hostiles } from './combat.js';
@@ -58,6 +58,12 @@ if (shotName) {
     const z = -320 + Math.random() * 640;
     spawnPedestrian(x, z, { mode: 'wander' });
   }
+  // Every district gets its own crowd, seeded on its own roads — the
+  // far corners of the map (Isla Faro, Alto Mirador) were nearly empty.
+  populateDistricts({
+    'Muelle Neón': 10, 'Isla Faro': 14, 'La Franja': 10,
+    'Mercado Nocturno': 12, 'Alto Mirador': 14, 'El Astillero': 12,
+  });
   loadGame();
 }
 
@@ -80,9 +86,12 @@ function updateTitleCamera() {
 
 // ---------- Interaction ----------
 
+// Reach for the E key: how close Rayo must stand to a door to get in.
+const ENTER_RANGE = 3.4;
+
 function nearestEnterableCar() {
   const pp = G.player.group.position;
-  let best = null, bd = 3.4;
+  let best = null, bd = ENTER_RANGE;
   for (const car of allCars()) {
     if (car.dead) continue;
     const d = dist2d(pp.x, pp.z, car.x, car.z);

@@ -11,6 +11,11 @@ import { addShake } from './camera.js';
 
 export const PLAYER_COLORS = { shirt: 0x3ecfe8, pants: 0x23262e, skin: 0xc68863, hair: 0x14100c };
 
+// On-foot pace in m/s: the walk reads as a harbour jog, and the sprint
+// is what the escape stages are timed against.
+const WALK_SPEED = 4.6;
+const SPRINT_SPEED = 7.4;
+
 let fireCd = 0;
 const _push = { x: 0, z: 0 };
 const _raycaster = () => new THREE.Raycaster();
@@ -94,7 +99,7 @@ export function updatePlayer(dt, cars) {
   if (keys.d) mx += 1;
   const moving = (mx !== 0 || mz !== 0);
   const sprint = keys.shift;
-  const speedMax = sprint ? 7.4 : 4.6;
+  const speedMax = sprint ? SPRINT_SPEED : WALK_SPEED;
   let vx = 0, vz = 0;
   if (moving) {
     const len = Math.hypot(mx, mz);

@@ -198,7 +198,10 @@ function beginStage() {
     const n = stage.hostiles || 4;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      spawnHostile(t.x + Math.cos(a) * (6 + i * 1.7), t.z + Math.sin(a) * (6 + i * 1.7),
+      // Spiral ring: each hostile steps 1.7 m further out than the last,
+      // so the ring never stacks two bodies on the same spot.
+      const ringR = 6 + i * 1.7;
+      spawnHostile(t.x + Math.cos(a) * ringR, t.z + Math.sin(a) * ringR,
         { gun: i % 3 === 2 ? 'smg' : 'pistol' });
     }
   }
