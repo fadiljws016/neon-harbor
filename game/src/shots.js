@@ -151,7 +151,11 @@ let chaseVolley = null;
 // the streaks alone are recoloured deep saturated orange (body
 // 0xff6a00, amber core 0xffa200) — the pale yellow washed out against
 // the searchlight pool. Sizes, timing, the star recipe and the light
-// itself are all unchanged.
+// itself are all unchanged. Owner's trim on the liveliness roll: the
+// star now burns a step smaller and dimmer (scale 0.68, peak opacity
+// 0.8) and stageChase dims the roadblock cruisers' own headlight glare
+// — the clustered flashes were washing the firing line out. Colours
+// and timing still unchanged.
 let chaseStarTex = null;
 let streakGeo = null, streakMat = null;
 let streakCoreGeo = null, streakCoreMat = null;
@@ -184,7 +188,7 @@ function spawnChaseFlash(s, from) {
     s.flash = new THREE.Sprite(new THREE.SpriteMaterial({
       map: chaseStarTex, transparent: true, opacity: 0, depthWrite: false,
     }));
-    s.flash.scale.set(0.85, 0.85, 1);
+    s.flash.scale.set(0.68, 0.68, 1);
     G.scene.add(s.flash);
   }
   s.flash.position.set(from.x, from.y, from.z);
@@ -220,7 +224,7 @@ function updateChaseFx(dt) {
       if (!s.flash) continue;
       s.flashAge = (s.flashAge ?? 99) + dt;
       const age = s.flashAge;
-      s.flash.material.opacity = age <= 0.12 ? 1 : Math.max(0, 1 - (age - 0.12) / 0.10);
+      s.flash.material.opacity = 0.8 * (age <= 0.12 ? 1 : Math.max(0, 1 - (age - 0.12) / 0.10));
     }
   }
   for (let i = chaseStreaks.length - 1; i >= 0; i--) {
@@ -259,16 +263,17 @@ export function stageChase() {
   const gt = addCar('sport', -236, -50, 0, 0xffcf3f);
   gt.speed = 23; // 83 km/h on the speedo
   G.playerCar = gt;
-  // THE DUEL: Rayo is not behind the wheel this time — he is leaned out
-  // of the driver's door at seat height, pistol up, trading fire with
-  // the roadblock ahead.
-  rocco.group.position.set(-236.9, 0.30, -49.6);
+  // THE DUEL: Rayo is not behind the wheel this time — he stands at
+  // the driver's door with a clear step of space from the flank (the
+  // owner asked for a visible gap, not a hug), pistol up, trading fire
+  // with the roadblock ahead.
+  rocco.group.position.set(-237.9, 0.30, -49.6);
   rocco.heading = 0; // facing the roadblock
   rocco.group.rotation.y = 0;
   poseAim(rocco.person);
-  // The red ally hangs out of the passenger side with the SMG, answering
-  // the same roadblock.
-  const ally = spawnHostile(-235.1, -49.6, {
+  // The red ally stands off the passenger side with the same clear
+  // step of space, SMG up, answering the same roadblock.
+  const ally = spawnHostile(-234.1, -49.6, {
     shirt: 0xb03030, gun: 'smg', ally: true, name: 'ally', health: 999,
   });
   ally.group.position.y = 0.30;
@@ -278,6 +283,19 @@ export function stageChase() {
   const rb1 = spawnPoliceCar(-239.5, -31, 0.9, 'roadblock');
   const rb2 = spawnPoliceCar(-231.5, -29.5, -0.8, 'roadblock');
   rb1.speed = 0; rb2.speed = 0;
+  // The cruisers' own headlight glare was blowing out the firing line
+  // in front of them: dim ONLY these two cars' glow sprite (~22%) and
+  // asphalt pool (0.55 -> 0.43) so all five officers read individually
+  // against the navy. No other car, and no light in the scene, changes.
+  const dimRoadblockGlare = (car) => {
+    if (!car.group) return;
+    car.group.traverse((o) => {
+      if (o.isSprite && o.material.blending === THREE.AdditiveBlending) o.material.opacity = 0.78;
+      if (o.isMesh && o.geometry && o.geometry.type === 'CircleGeometry') o.material.opacity = 0.43;
+    });
+  };
+  dimRoadblockGlare(rb1);
+  dimRoadblockGlare(rb2);
   const o1 = spawnOfficer(-243.2, -30.5, { heading: Math.PI });
   poseCrouch(o1.person);
   const o2 = spawnOfficer(-228.2, -30.0, { heading: Math.PI, gun: 'smg' });
@@ -304,18 +322,21 @@ export function stageChase() {
   spawnPedestrian(-226, -40, { mode: 'wander', heading: -0.6 });
   // The two-way volley: all five officers work the GT's rear quarters
   // while Rayo and the ally answer at the roadblock. The clocks are
-  // deliberately dense (0.34-0.48 s cycles, 3-round bursts from the
-  // SMGs) and feed the staged chase FX below, so at any frozen instant
-  // several muzzle stars are lit and several streaks are mid-flight.
+  // deliberately dense (3-round bursts from the SMGs) and feed the
+  // staged chase FX below, so at any frozen instant several muzzle
+  // stars are lit and several streaks are mid-flight. The officers'
+  // cycles run hotter (0.24-0.32 s) than the heroes' (0.34-0.48 s) —
+  // the owner wants the police fire visibly plentiful, with at least
+  // three of the five caught mid-shot in the judged frame.
   const gtRearC = { x: -236, y: 1.0, z: -52.1 };
   const gtRearL = { x: -236.8, y: 0.9, z: -52.0 };
   const gtRearR = { x: -235.2, y: 0.9, z: -52.0 };
   chaseVolley = [
-    { person: o1.person, kind: 'officer', sfx: 'pistol', target: gtRearL, t: 0.05, min: 0.34, max: 0.48, spread: 0.03 },
-    { person: o2.person, kind: 'officer', sfx: 'smg', target: gtRearR, t: 0.22, min: 0.34, max: 0.48, spread: 0.035, burst: 3 },
-    { person: o3.person, kind: 'officer', sfx: 'pistol', target: gtRearC, t: 0.38, min: 0.34, max: 0.48, spread: 0.03 },
-    { person: o4.person, kind: 'officer', sfx: 'pistol', target: gtRearL, t: 0.14, min: 0.34, max: 0.48, spread: 0.03 },
-    { person: o5.person, kind: 'officer', sfx: 'pistol', target: gtRearR, t: 0.30, min: 0.34, max: 0.48, spread: 0.03 },
+    { person: o1.person, kind: 'officer', sfx: 'pistol', target: gtRearL, t: 0.05, min: 0.24, max: 0.32, spread: 0.03 },
+    { person: o2.person, kind: 'officer', sfx: 'smg', target: gtRearR, t: 0.22, min: 0.24, max: 0.32, spread: 0.035, burst: 3 },
+    { person: o3.person, kind: 'officer', sfx: 'pistol', target: gtRearC, t: 0.38, min: 0.24, max: 0.32, spread: 0.03 },
+    { person: o4.person, kind: 'officer', sfx: 'pistol', target: gtRearL, t: 0.14, min: 0.24, max: 0.32, spread: 0.03 },
+    { person: o5.person, kind: 'officer', sfx: 'pistol', target: gtRearR, t: 0.30, min: 0.24, max: 0.32, spread: 0.03 },
     { person: rocco.person, kind: 'player', sfx: 'pistol', target: { x: -233.4, y: 1.15, z: -27.6 }, t: 0.46, min: 0.34, max: 0.48, spread: 0.03 },
     { person: ally.person, kind: 'ally', sfx: 'smg', target: { x: -237.8, y: 1.1, z: -27.6 }, t: 0.08, min: 0.34, max: 0.48, spread: 0.035, burst: 3 },
   ];
@@ -326,11 +347,17 @@ export function stageChase() {
     }
   }
   // LUCERO-1 pinned AHEAD of the camera, top-centre over the roadblock,
-  // her cone slanting back onto the player's car.
+  // her cone slanting back onto the player's car. She flies a touch
+  // lower than the combat staging (18.5, not 22) and the camera aims a
+  // step higher (look y 2.6) so her WHOLE silhouette — rotor disc,
+  // body, tail boom, skids — sits inside the frame with margin; at 22
+  // the disc clipped the top edge. The spotlight still targets the GT,
+  // so the pool stays on the duel; only her altitude moved, never the
+  // locked light values.
   G.heliActive = true;
-  setHeliAltitude(22);
+  setHeliAltitude(18.5);
   setHeliOrbit(0.15);
-  stageCamera(-240.5, 5.4, -61, -234, 1.4, -27);
+  stageCamera(-240.5, 5.4, -61, -234, 2.6, -27);
 }
 
 // ---------- COMBAT ----------
