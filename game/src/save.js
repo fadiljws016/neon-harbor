@@ -1,40 +1,39 @@
-// save.js — localStorage persistence: cash, respect, unlocks, mission
-// progress. Shot mode never reads or writes the save.
+// save.js — localStorage persistence for cash, respect, unlocks, garage.
+// Deliberately forgiving: a corrupt save falls back to a fresh runner.
 
-const SAVE_KEY = 'neonharbor-save-v1';
-function saveGame() {
-  if (G.shotMode) return;
+import { G, rankForRespect } from './state.js';
+
+const KEY = 'neon-harbor-save-v1';
+
+export function saveGame() {
   try {
     const data = {
       cash: G.cash, respect: G.respect,
-      missionIndex: G.mission.index,
-      weapons: {
-        pistol: { unlocked: G.weapons.pistol.unlocked, ammo: G.weapons.pistol.ammo },
-        smg: { unlocked: G.weapons.smg.unlocked, ammo: G.weapons.smg.ammo },
-        shotgun: { unlocked: G.weapons.shotgun.unlocked, ammo: G.weapons.shotgun.ammo },
-      },
+      unlocked: G.unlocked, ammo: G.ammo,
+      garageCars: G.garageCars,
+      kills: G.kills, faresDone: G.faresDone, racesWon: G.racesWon,
+      missionIndex: G.missionIndex,
     };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-  } catch (e) { /* storage unavailable — play session-only */ }
+    localStorage.setItem(KEY, JSON.stringify(data));
+  } catch (e) { /* storage unavailable — play on unsaved */ }
 }
-function loadSave() {
+
+export function loadGame() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(KEY);
     if (!raw) return false;
-    const data = JSON.parse(raw);
-    G.cash = data.cash || 0;
-    G.respect = data.respect || 0;
-    G.rankIndex = rankFor(G.respect);
-    G.mission.index = data.missionIndex || 0;
-    for (const w of ['pistol', 'smg', 'shotgun']) {
-      if (data.weapons && data.weapons[w]) {
-        G.weapons[w].unlocked = !!data.weapons[w].unlocked;
-        G.weapons[w].ammo = data.weapons[w].ammo || 0;
-      }
-    }
+    const d = JSON.parse(raw);
+    if (typeof d.cash !== 'number' || typeof d.respect !== 'number') return false;
+    G.cash = d.cash; G.respect = d.respect;
+    G.rankIndex = rankForRespect(d.respect);
+    if (d.unlocked) G.unlocked = Object.assign(G.unlocked, d.unlocked);
+    if (d.ammo) G.ammo = Object.assign(G.ammo, d.ammo);
+    if (Array.isArray(d.garageCars) && d.garageCars.length) G.garageCars = d.garageCars;
+    G.kills = d.kills | 0; G.faresDone = d.faresDone | 0; G.racesWon = d.racesWon | 0;
     return true;
   } catch (e) { return false; }
 }
-function clearSave() {
-  try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
+
+export function wipeSave() {
+  try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
 }

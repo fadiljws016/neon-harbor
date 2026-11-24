@@ -1,54 +1,83 @@
-// camera.js — follow camera (foot + car) and the staged camera the shots
-// pin exactly: stageCamera(x,y,z, lx,ly,lz) freezes the frame composition.
+// camera.js — follow/driving cameras, the staged shot camera, dialogue
+// framing, and impact shake. Staging always wins: while a shot camera is
+// set, the follow rig stays silent.
 
-let camPos = new THREE.Vector3(-140, 26, 70);
-let camLook = new THREE.Vector3(-110, 1, -10);
+import { G } from './state.js';
+import { clamp, lerp, angleLerp } from './util.js';
 
-function initCamera() {
-  if (G.camera) camPos.copy(G.camera.position);
-}
-function stageCamera(x, y, z, lx, ly, lz) {
-  G.stageCam = { x, y, z, lx, ly, lz };
-  camPos.set(x, y, z);
-  camLook.set(lx, ly, lz);
+let staged = null;
+let shakeAmp = 0;
+let followDist = 7.5;
+let followHeight = 3.1;
+let camYaw = Math.PI;
+let dialoguePair = null;
+
+export function stageCamera(x, y, z, lx, ly, lz) {
+  staged = { x, y, z, lx, ly, lz };
   if (G.camera) {
-    G.camera.position.copy(camPos);
-    G.camera.lookAt(camLook);
+    G.camera.position.set(x, y, z);
+    G.camera.lookAt(lx, ly, lz);
   }
 }
-function clearStageCam() { G.stageCam = null; }
-function updateCamera(dt) {
+export function clearStageCamera() { staged = null; }
+export function isStaged() { return staged !== null; }
+
+export function addShake(amp) { shakeAmp = Math.min(0.5, shakeAmp + amp); }
+
+export function setDialoguePair(a, b) { dialoguePair = { a, b }; }
+export function clearDialoguePair() { dialoguePair = null; }
+
+export function updateDialogueCamera(dt) {
+  if (!dialoguePair || !G.camera) return;
+  const { a, b } = dialoguePair;
+  const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const px = -dz / len, pz = dx / len;
+  const tx = mx + px * 3.4, tz = mz + pz * 3.4;
+  G.camera.position.x = lerp(G.camera.position.x, tx, Math.min(1, dt * 3));
+  G.camera.position.y = lerp(G.camera.position.y, 1.6, Math.min(1, dt * 3));
+  G.camera.position.z = lerp(G.camera.position.z, tz, Math.min(1, dt * 3));
+  G.camera.lookAt(mx, 1.35, mz);
+}
+
+export function updateCamera(dt) {
   const cam = G.camera;
   if (!cam) return;
-  if (G.stageCam) {
-    cam.position.set(G.stageCam.x, G.stageCam.y, G.stageCam.z);
-    cam.lookAt(G.stageCam.lx, G.stageCam.ly, G.stageCam.lz);
+  if (staged) {
+    cam.position.set(staged.x, staged.y, staged.z);
+    cam.lookAt(staged.lx, staged.ly, staged.lz);
     return;
   }
-  const player = G.player;
-  if (!player) return;
-  const pp = player.fig.position;
-  let back = 8.5, height = 3.4, lookUp = 1.2;
-  if (player.car) { back = 10.5; height = 4.0; lookUp = 1.0; }
-  const h = player.heading;
-  const tx = pp.x - fwdX(h) * back, tz = pp.z - fwdZ(h) * back;
-  const ty = height;
-  const k = 1 - Math.pow(0.0001, dt); // smooth, frame-rate independent
-  camPos.x = lerp(camPos.x, tx, k * 0.6);
-  camPos.z = lerp(camPos.z, tz, k * 0.6);
-  camPos.y = lerp(camPos.y, ty, k * 0.8);
-  // keep the camera out of buildings and above the street
-  const fixed = collideBuildings(camPos.x, camPos.z, 0.8);
-  camPos.x = fixed.x; camPos.z = fixed.z;
-  camPos.y = Math.max(camPos.y, 1.1);
-  if (G.camShake > 0) {
-    G.camShake = Math.max(0, G.camShake - dt * 0.8);
-    camPos.x += rand(-1, 1) * G.camShake * 0.4;
-    camPos.y += rand(-1, 1) * G.camShake * 0.3;
+  if (dialoguePair) { updateDialogueCamera(dt); return; }
+  const p = G.player;
+  if (!p) return;
+  const target = G.playerCar || p;
+  const tPos = target.group ? target.group.position : target.pos;
+  const baseYaw = G.playerCar ? G.playerCar.angle : p.heading;
+  camYaw = angleLerp(camYaw, baseYaw + Math.PI, Math.min(1, dt * (G.playerCar ? 3.2 : 5)));
+  const dist = G.playerCar ? 8.6 : followDist;
+  const height = G.playerCar ? 3.4 : followHeight;
+  const tx = tPos.x + Math.sin(camYaw) * dist;
+  const tz = tPos.z + Math.cos(camYaw) * dist;
+  cam.position.x = lerp(cam.position.x, tx, Math.min(1, dt * 6));
+  cam.position.y = lerp(cam.position.y, height + (G.playerCar ? Math.abs(G.playerCar.speed) * 0.008 : 0), Math.min(1, dt * 6));
+  cam.position.z = lerp(cam.position.z, tz, Math.min(1, dt * 6));
+  cam.lookAt(tPos.x, 1.3, tPos.z);
+}
+
+export function updateCameraFeel(dt) {
+  if (shakeAmp > 0.001 && G.camera && !staged) {
+    G.camera.position.x += (Math.random() - 0.5) * shakeAmp;
+    G.camera.position.y += (Math.random() - 0.5) * shakeAmp * 0.6;
+    shakeAmp = Math.max(0, shakeAmp - dt * 1.8);
   }
-  cam.position.copy(camPos);
-  camLook.x = lerp(camLook.x, pp.x + fwdX(h) * 4, k);
-  camLook.z = lerp(camLook.z, pp.z + fwdZ(h) * 4, k);
-  camLook.y = lerp(camLook.y, lookUp, k);
-  cam.lookAt(camLook);
+  // Speed FOV stretch in the car.
+  if (G.camera) {
+    const target = G.playerCar ? 66 + clamp(Math.abs(G.playerCar.speed), 0, 47) * 0.16 : 66;
+    if (Math.abs(G.camera.fov - target) > 0.1) {
+      G.camera.fov = lerp(G.camera.fov, target, Math.min(1, dt * 4));
+      G.camera.updateProjectionMatrix();
+    }
+  }
 }

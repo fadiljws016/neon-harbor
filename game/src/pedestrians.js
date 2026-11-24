@@ -1,102 +1,129 @@
-// pedestrians.js — ambient night crowd: walkers on the sidewalks, chat
-// pairs under the signs, browsers at the stalls, sitters on the quay.
-// spawnPedAt/crowd are also the staging API the shots use.
+// pedestrians.js — the crowd: wanderers, stall browsers, chat pairs and
+// their panic when the shooting starts. Density is a feature here.
 
-function spawnPedAt(x, z, mode, opts) {
-  opts = opts || {};
-  const fig = buildFigure(opts);
-  fig.position.set(x, 0, z);
-  const heading = opts.heading !== undefined ? opts.heading : rng() * Math.PI * 2;
-  fig.rotation.y = heading;
-  G.scene.add(fig);
+import { G } from './state.js';
+import { rand, dist2d, angleTo, angleLerp } from './util.js';
+import { makePerson, poseStand, poseChat, poseSurrender, poseDown, animatePerson } from './people.js';
+import { nearestRoadPoint } from './city.js';
+import { collideWorld } from './player.js';
+
+export const peds = [];
+let pedSeq = 1;
+
+export function spawnPedestrian(x, z, opts = {}) {
+  const person = makePerson(opts);
+  person.group.position.set(x, 0, z);
+  person.group.rotation.y = opts.heading ?? rand(0, Math.PI * 2);
+  G.scene.add(person.group);
   const ped = {
-    fig, mode: mode || 'idle', heading, speed: 0, name: opts.name || null,
-    phase: rng() * 10, homeX: x, homeZ: z, poseT: 0, chatPartner: null,
+    id: pedSeq++, person, group: person.group,
+    mode: opts.mode || 'wander',
+    homeX: x, homeZ: z,
+    targetX: x, targetZ: z, waitT: rand(0, 3),
+    speed: rand(1.1, 1.9), health: 30,
+    dead: false, wounded: false, fleeT: 0, chatPartner: null,
   };
-  if (opts.pose) applyPose(fig, opts.pose);
-  else if (mode === 'walk') applyPose(fig, 'walk');
-  else if (mode === 'chat') applyPose(fig, 'chat');
-  else if (mode === 'sit') applyPose(fig, 'sit');
-  else applyPose(fig, 'stand');
-  if (opts.weapon) setFigureWeapon(fig, opts.weapon);
-  G.peds.push(ped);
+  if (ped.mode === 'chat') poseChat(person, Math.random());
+  if (ped.mode === 'browse') poseStand(person);
+  peds.push(ped);
   return ped;
 }
-function crowd(x, z, n, seed, modes) {
-  const keep = _seed;
-  if (seed !== undefined) srand(seed * 7919 + 17);
-  const out = [];
-  modes = modes || ['walk', 'idle', 'chat'];
+
+export function crowd(x, z, n, r = 8) {
+  const made = [];
   for (let i = 0; i < n; i++) {
-    const px = x + rand(-7, 7), pz = z + rand(-7, 7);
-    const mode = pick(modes);
-    out.push(spawnPedAt(px, pz, mode, { heading: rng() * Math.PI * 2 }));
+    const a = rand(0, Math.PI * 2);
+    const d = rand(1, r);
+    made.push(spawnPedestrian(x + Math.cos(a) * d, z + Math.sin(a) * d,
+      { mode: Math.random() < 0.4 ? 'chat' : 'wander' }));
   }
-  srand(keep + n);
-  return out;
+  return made;
 }
-function removePed(ped) {
-  const i = G.peds.indexOf(ped);
-  if (i >= 0) G.peds.splice(i, 1);
-  G.scene.remove(ped.fig);
+
+export function chatPair(x, z, angle, optsA = {}, optsB = {}) {
+  const dx = Math.sin(angle) * 0.85, dz = Math.cos(angle) * 0.85;
+  const a = spawnPedestrian(x - dx / 2, z - dz / 2, { ...optsA, mode: 'chat', heading: angle });
+  const b = spawnPedestrian(x + dx / 2, z + dz / 2, { ...optsB, mode: 'chat', heading: angle + Math.PI });
+  a.chatPartner = b; b.chatPartner = a;
+  poseChat(a.person, 0.4); poseChat(b.person, 0.75);
+  return [a, b];
 }
-function clearPedsNear(x, z, r) {
-  for (let i = G.peds.length - 1; i >= 0; i--) {
-    const p = G.peds[i].fig.position;
-    if (dist2(p.x, p.z, x, z) < r) removePed(G.peds[i]);
+
+export function woundPed(ped, damage, shooter) {
+  if (ped.dead) return;
+  ped.health -= damage;
+  if (ped.health <= 0) {
+    ped.dead = true;
+    poseDown(ped.person);
+    if (shooter === 'player') G.wanted = Math.min(5, G.wanted + 0.8);
+  } else {
+    ped.wounded = true;
+    ped.fleeT = 4;
   }
 }
-function clearAllPeds() {
-  for (let i = G.peds.length - 1; i >= 0; i--) removePed(G.peds[i]);
+
+export function clearPeds() {
+  for (const p of peds) G.scene.remove(p.group);
+  peds.length = 0;
 }
-// ambient population for the live game (kept light; staged shots clear it)
-function populateAmbient() {
-  for (const rz of ROADS_Z) {
-    for (let i = 0; i < 3; i++) {
-      const x = rand(LAND.minX + 16, LAND.maxX - 16);
-      spawnPedAt(x, rz + (chance(0.5) ? 9.6 : -9.6), 'walk', {});
+
+export function updatePedestrians(dt) {
+  const pp = G.player ? G.player.group.position : null;
+  for (const ped of peds) {
+    if (ped.dead) continue;
+    const pos = ped.group.position;
+    // Panic: gunfire nearby or a fresh wound sends everyone running.
+    if (pp && !ped.wounded) {
+      const d = dist2d(pos.x, pos.z, pp.x, pp.z);
+      if (d < 9 && G.t - (G.lastHurtT || -99) < 2.5) ped.fleeT = Math.max(ped.fleeT, 2);
+      if (d < 6 && G.wanted >= 2.5 && Math.random() < 0.01) poseSurrender(ped.person);
     }
-  }
-  for (const x of ROADS_X) {
-    for (let i = 0; i < 2; i++) {
-      const z = rand(LAND.minZ + 16, LAND.maxZ - 16);
-      spawnPedAt(x + (chance(0.5) ? 9.6 : -9.6), z, 'walk', {});
+    if (ped.fleeT > 0) {
+      ped.fleeT -= dt;
+      if (pp) {
+        const away = angleTo(pp.x, pp.z, pos.x, pos.z);
+        ped.group.rotation.y = angleLerp(ped.group.rotation.y, away, Math.min(1, dt * 8));
+        pos.x += Math.sin(away) * 5.4 * dt;
+        pos.z += Math.cos(away) * 5.4 * dt;
+        collideWorld(pos, 0.4);
+        animatePerson(ped.person, dt, 5.4);
+      }
+      continue;
     }
-  }
-  crowd(-196, 10, 6, 11);
-  crowd(-120, -30, 5, 23, ['chat', 'idle']);
-  crowd(232, -220, 5, 31, ['walk', 'idle', 'chat']);
-}
-function updatePeds(dt) {
-  const t = G.elapsed;
-  for (const ped of G.peds) {
-    const p = ped.fig.position;
-    if (ped.mode === 'walk') {
-      ped.speed = 1.5;
-      // stroll, gently steering back toward home turf
-      ped.phase += dt * 0.14;
-      const targetH = Math.atan2(ped.homeX - p.x, ped.homeZ - p.z) + Math.sin(ped.phase) * 1.2;
-      ped.heading = angLerp(ped.heading, targetH, dt * 1.4);
-      p.x += fwdX(ped.heading) * ped.speed * dt;
-      p.z += fwdZ(ped.heading) * ped.speed * dt;
-      const fixed = collideBuildings(p.x, p.z, 0.45);
-      p.x = fixed.x; p.z = fixed.z;
-      ped.fig.rotation.y = ped.heading;
-      animateFigure(ped.fig, dt, ped.speed, t + ped.phase * 7);
-    } else if (ped.mode === 'chat') {
-      animateFigure(ped.fig, dt, 0, t + ped.phase * 7);
-    } else if (ped.mode === 'flee') {
-      ped.speed = 4.4;
-      const away = Math.atan2(p.x - (G.player ? G.player.fig.position.x : p.x), p.z - (G.player ? G.player.fig.position.z : p.z));
-      ped.heading = angLerp(ped.heading, away, dt * 3);
-      p.x += fwdX(ped.heading) * ped.speed * dt;
-      p.z += fwdZ(ped.heading) * ped.speed * dt;
-      ped.fig.rotation.y = ped.heading;
-      animateFigure(ped.fig, dt, ped.speed, t + ped.phase * 7);
-      ped.poseT -= dt;
-      if (ped.poseT <= 0) ped.mode = 'idle';
-    } else {
-      animateFigure(ped.fig, dt, 0, t + ped.phase * 7);
+    if (ped.mode === 'chat') {
+      if (ped.chatPartner && !ped.chatPartner.dead) {
+        const cp = ped.chatPartner.group.position;
+        ped.group.rotation.y = angleLerp(ped.group.rotation.y,
+          angleTo(pos.x, pos.z, cp.x, cp.z), Math.min(1, dt * 4));
+      }
+      animatePerson(ped.person, dt, 0);
+      continue;
     }
+    if (ped.mode === 'browse') {
+      ped.waitT -= dt;
+      if (ped.waitT <= 0) {
+        ped.waitT = rand(2, 6);
+        ped.group.rotation.y += rand(-0.8, 0.8);
+      }
+      animatePerson(ped.person, dt, 0);
+      continue;
+    }
+    // Wander: stroll between nearby road points, pausing to look around.
+    ped.waitT -= dt;
+    if (ped.waitT > 0) { animatePerson(ped.person, dt, 0); continue; }
+    const d = dist2d(pos.x, pos.z, ped.targetX, ped.targetZ);
+    if (d < 0.8) {
+      const near = nearestRoadPoint(ped.homeX + rand(-26, 26), ped.homeZ + rand(-26, 26));
+      ped.targetX = near.x + rand(-3, 3);
+      ped.targetZ = near.z + rand(-3, 3);
+      ped.waitT = rand(0, 3.5);
+      continue;
+    }
+    const a = angleTo(pos.x, pos.z, ped.targetX, ped.targetZ);
+    ped.group.rotation.y = angleLerp(ped.group.rotation.y, a, Math.min(1, dt * 5));
+    pos.x += Math.sin(ped.group.rotation.y) * ped.speed * dt;
+    pos.z += Math.cos(ped.group.rotation.y) * ped.speed * dt;
+    collideWorld(pos, 0.4);
+    animatePerson(ped.person, dt, ped.speed);
   }
 }

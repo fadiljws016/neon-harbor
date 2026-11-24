@@ -1,125 +1,237 @@
-// hud.js — neon glass HUD: mission panel, PDP dispatch feed, vitals,
-// weapon slots, dialogue box, speedo, district caption. DOM lives in
-// index.html; this module only reads state and paints values.
+// hud.js — every DOM readout: mission panel, dispatch board, dialogue,
+// weapons, stars, speedo, toasts. Neon glass over the night.
 
-function el(id) { return document.getElementById(id); }
-let hudReady = false;
-function initHUD() {
-  const slots = el('weaponSlots');
-  if (slots && !slots.children.length) {
-    WEAPON_ORDER.forEach((w, i) => {
-      const d = document.createElement('div');
-      d.className = 'wslot';
-      d.id = 'wslot-' + w;
-      d.innerHTML = '<div class="wname">' + WEAPON_DEFS[w].name + '</div><div class="wammo"></div>';
-      slots.appendChild(d);
-    });
-  }
-  hudReady = true;
+import { G, WEAPONS, RANKS, currentWeapon } from './state.js';
+import { fmtMoney, fmtClock, fmtTimer } from './util.js';
+import { missionPanelInfo, missionStatusList } from './missions.js';
+import { dispatch } from './police.js';
+import { drawCornerMinimap, drawFullMap, routeInfo } from './minimap.js';
+import { districtAt } from './city.js';
+
+const el = {};
+let lastStars = -1;
+let mapCanvas = null;
+let cornerCanvas = null;
+let toastTimer = 0;
+let mapTick = 0;
+
+export function toast(text) { (G.toastQueue ||= []).push(text); }
+
+export function initHUD() {
+  const ids = ['mission-panel', 'mission-title', 'mission-stage', 'mission-objective', 'mission-next',
+    'mission-timer', 'cash', 'respect', 'rank', 'clock', 'stars', 'radio', 'health-fill', 'armor-fill',
+    'weapons', 'dispatch', 'dialogue', 'dialogue-name', 'dialogue-text', 'speedo', 'district',
+    'toasts', 'vignette', 'banner', 'minimap', 'wanted-label', 'start-screen',
+    'mapOverlay', 'mapCanvas', 'mmcTitle', 'mmcStage', 'mmcGiver', 'mmcObj', 'mmcNext',
+    'mmcReward', 'mmcTimer', 'mmlRows', 'msCash', 'msRank', 'msRespect', 'msWanted',
+    'msDistrict', 'msRoute', 'mapClock'];
+  for (const id of ids) el[id] = document.getElementById(id);
+  mapCanvas = el['mapCanvas'];
+  cornerCanvas = el['minimap'];
+  buildWeaponSlots();
 }
-function fmtTime(s) {
-  if (s === null || s === undefined) return '';
-  s = Math.max(0, Math.ceil(s));
-  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+
+function buildWeaponSlots() {
+  if (!el['weapons']) return;
+  el['weapons'].innerHTML = '';
+  WEAPONS.forEach((w, i) => {
+    const d = document.createElement('div');
+    d.className = 'weapon-slot';
+    d.id = 'weapon-' + i;
+    d.innerHTML = '<div class="wname">' + w.name + '</div><div class="wammo"></div>';
+    el['weapons'].appendChild(d);
+  });
 }
-function refreshHUD() {
-  if (!hudReady) return;
-  const info = missionPanelInfo();
-  el('mpTitle').textContent = info.title || 'Bahía Noche';
-  el('mpStage').textContent = info.stage || '';
-  el('mpObjective').textContent = info.objective || 'Free roam — find Madame Volt at Club Sirena';
-  el('mpNext').textContent = info.next ? 'NEXT ' + info.next : '';
-  el('mpTimer').textContent = info.timer !== null && info.timer !== undefined ? fmtTime(info.timer) : '';
-  el('mpTimer').style.display = (info.timer !== null && info.timer !== undefined) ? 'block' : 'none';
-  // economy + rank
-  el('cashAmt').textContent = '$' + G.cash;
-  el('rankLine').textContent = RANKS[G.rankIndex].name + ' · Respect ' + G.respect;
-  const clock = el('clockLine');
-  if (clock) {
-    const hh = Math.floor(G.timeHours), mm = Math.floor((G.timeHours - hh) * 60);
-    clock.textContent = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+
+function starsHTML() {
+  let s = '';
+  for (let i = 0; i < 5; i++) {
+    s += '<span class="star' + (i < Math.round(G.wanted) ? ' on' : '') + '">★</span>';
   }
-  // wanted stars
-  const stars = wantedStars();
-  let starStr = '';
-  for (let i = 0; i < 5; i++) starStr += i < stars ? '★' : '☆';
-  el('stars').textContent = starStr;
-  el('stars').style.opacity = stars > 0 ? '1' : '0.25';
-  el('searchLine').textContent = stars > 0 ? (G.heliSeesPlayer ? 'TRACKING' : 'SEARCHING') : '';
-  // vitals
-  el('healthFill').style.width = clamp(G.health, 0, 100) + '%';
-  el('armorFill').style.width = clamp(G.armor, 0, 100) + '%';
-  // weapons
-  for (const w of WEAPON_ORDER) {
-    const slot = el('wslot-' + w);
-    if (!slot) continue;
-    const data = G.weapons[w];
-    slot.classList.toggle('active', G.weapon === w);
-    slot.classList.toggle('locked', !data.unlocked);
-    slot.querySelector('.wammo').textContent = !data.unlocked ? 'LOCKED'
-      : (data.ammo === Infinity ? '∞' : String(data.ammo));
-  }
-  // dispatch feed
-  const dp = el('dpRows');
-  if (dp) {
-    if (!G.dispatch.length) {
-      dp.innerHTML = '<div class="dprow dim"><span>PDP DISPATCH</span><span>QUIET</span></div>';
-    } else {
-      dp.innerHTML = G.dispatch.map(r =>
-        '<div class="dprow"><span>' + r.unit + (r.dist !== null ? ' · ' + r.dist + ' m' : '') +
-        '</span><span class="role">' + r.role + '</span></div>').join('');
-    }
-  }
-  // speedo
-  const inCar = G.player && G.player.car;
-  el('speedo').style.display = inCar ? 'block' : 'none';
-  if (inCar) {
-    el('spSpeed').textContent = G.speedKmh;
-    el('spCar').textContent = CAR_TYPES[G.player.car.type].name;
-    el('spCond').textContent = G.player.car.dead ? 'WRECKED' : (G.player.car.health > 55 ? 'CONDITION OK' : 'DAMAGED');
-  }
-  // district caption
-  if (G.player) {
-    const d = districtAt(G.player.fig.position.x, G.player.fig.position.z);
-    if (d && d !== G.district) {
-      G.district = d;
-      el('districtCaption').textContent = d.toUpperCase();
-    }
-  }
-  renderDialogue();
+  return s;
 }
-// ---------- dialogue ----------
-function showDialogue(lines, onDone) {
-  G.dialogue = { lines, index: 0, onDone: onDone || null };
-  renderDialogue();
-}
-function advanceDialogue() {
-  if (!G.dialogue) return;
-  G.dialogue.index++;
-  if (G.dialogue.index >= G.dialogue.lines.length) {
-    const cb = G.dialogue.onDone;
-    G.dialogue = null;
-    if (cb) cb();
-  }
-  renderDialogue();
-}
-function dialogueLineShape(l) {
-  if (l.name) return l;
-  const ch = CHARACTERS[l.who] || { name: l.who || '', color: 0xffffff };
-  return { name: ch.name, color: ch.color, text: l.text };
-}
-function renderDialogue() {
-  const box = el('dialogue');
+
+export function updateToasts(dt) {
+  const box = el['toasts'];
   if (!box) return;
-  if (!G.dialogue || !G.dialogue.lines.length) { box.style.display = 'none'; return; }
-  const line = dialogueLineShape(G.dialogue.lines[Math.min(G.dialogue.index, G.dialogue.lines.length - 1)]);
-  box.style.display = 'block';
-  const nm = el('dgName');
-  nm.textContent = line.name;
-  nm.style.color = '#' + (line.color || 0xffffff).toString(16).padStart(6, '0');
-  el('dgText').textContent = line.text;
-  const initials = (line.name || '?').replace(/[^A-Za-z ]/g, '').split(' ').filter(Boolean).map(w => w[0]).slice(0, 2).join('');
-  const av = el('dgAvatar');
-  av.textContent = initials;
-  av.style.background = '#' + (line.color || 0x888888).toString(16).padStart(6, '0');
+  if (G.toastQueue.length && !box.dataset.busy) {
+    const text = G.toastQueue.shift();
+    const d = document.createElement('div');
+    d.className = 'toast';
+    d.textContent = text;
+    box.appendChild(d);
+    box.dataset.busy = '1';
+    setTimeout(() => { d.classList.add('show'); }, 20);
+    setTimeout(() => {
+      d.classList.remove('show');
+      setTimeout(() => { d.remove(); delete box.dataset.busy; }, 350);
+    }, 2600);
+  }
+}
+
+export function updateVignette() {
+  if (!el['vignette']) return;
+  const hurt = G.health < 35 ? (0.55 - G.health / 90) : 0;
+  const wanted = G.wanted >= 4 ? 0.16 : 0;
+  el['vignette'].style.opacity = String(Math.min(0.75, hurt + wanted));
+}
+
+export function showBanner(text, sub = '') {
+  const b = el['banner'];
+  if (!b) return;
+  b.innerHTML = '<div class="banner-title">' + text + '</div>' +
+    (sub ? '<div class="banner-sub">' + sub + '</div>' : '');
+  b.classList.add('show');
+  setTimeout(() => b.classList.remove('show'), 3400);
+}
+
+// The full-map hub panels: current-job card (with reward), the eight-job
+// list with statuses, and the player strip with the live route pill.
+function updateMapPanels() {
+  const info = missionPanelInfo();
+  if (info) {
+    el['mmcTitle'].textContent = info.title;
+    el['mmcStage'].textContent = info.stage;
+    el['mmcGiver'].textContent = info.giver + ' · ' + info.district;
+    el['mmcObj'].textContent = info.objective;
+    el['mmcNext'].textContent = info.next ? 'NEXT — ' + info.next : '';
+    el['mmcReward'].textContent = 'REWARD  $' + info.reward.cash.toLocaleString('en-US') +
+      '  ·  +' + info.reward.respect + ' RESPECT';
+    el['mmcTimer'].textContent = (info.timer !== null && info.timer !== undefined)
+      ? '⏱ ' + fmtTimer(info.timer) : '';
+  } else {
+    el['mmcTitle'].textContent = 'Free Roam';
+    el['mmcStage'].textContent = 'BAHÍA NOCHE';
+    el['mmcGiver'].textContent = '';
+    el['mmcObj'].textContent = 'No active job. Find a fixer marker on the map.';
+    el['mmcNext'].textContent = '';
+    el['mmcReward'].textContent = '';
+    el['mmcTimer'].textContent = '';
+  }
+  // Mission list — all eight, status-coded.
+  const list = missionStatusList();
+  el['mmlRows'].innerHTML = list.map((m) => {
+    const icon = m.status === 'done' ? '✓' : (m.status === 'active' ? '▶' : '●');
+    return '<div class="mmlRow ' + m.status + '"><span class="mmlIcon">' + icon +
+      '</span><span class="mmlName">' + m.title + '</span><span class="mmlMeta">' +
+      m.giver.split(' ')[0] + ' · ' + m.district + '</span></div>';
+  }).join('');
+  // Player strip + route pill (district computed live from the car/player).
+  el['msCash'].textContent = fmtMoney(G.cash);
+  el['msRank'].textContent = RANKS[G.rankIndex];
+  el['msRespect'].textContent = 'Respect ' + G.respect;
+  el['msWanted'].textContent = G.wanted > 0.05
+    ? (G.wanted >= 4 ? 'HUNTED' : G.wanted >= 2.5 ? 'TRACKING' : 'SEARCHING') : 'Clean';
+  const pp = G.playerCar ? G.playerCar.group.position : (G.player ? G.player.group.position : null);
+  el['msDistrict'].textContent = pp ? districtAt(pp.x, pp.z).name : G.district;
+  const ri = routeInfo();
+  if (ri) {
+    el['msRoute'].textContent = 'ROUTE  ' + ri.dist + ' m · ≈ ' + Math.floor(ri.eta / 60) +
+      ':' + String(ri.eta % 60).padStart(2, '0') + ' drive';
+    el['msRoute'].style.display = '';
+  } else {
+    el['msRoute'].style.display = 'none';
+  }
+  el['mapClock'].textContent = fmtClock(G.hour);
+}
+
+export function updateHUD(dt) {
+  if (!el['cash']) return;
+  el['cash'].textContent = fmtMoney(G.cash);
+  el['respect'].textContent = 'Respect ' + G.respect;
+  el['rank'].textContent = RANKS[G.rankIndex];
+  el['clock'].textContent = fmtClock(G.hour);
+  el['radio'].textContent = G.radio + ' · "' + G.radioTrack + '"';
+  el['health-fill'].style.width = Math.max(0, G.health) + '%';
+  el['armor-fill'].style.width = Math.max(0, G.armor) + '%';
+  el['district'].textContent = G.district.toUpperCase();
+
+  const wStars = Math.round(G.wanted);
+  if (wStars !== lastStars) {
+    lastStars = wStars;
+    el['stars'].innerHTML = starsHTML();
+  }
+  el['wanted-label'].textContent =
+    G.wanted >= 4 ? 'HUNTED' : G.wanted >= 2.5 ? 'TRACKING' : G.wanted >= 1 ? 'SEARCHING' : '';
+
+  // Mission panel.
+  const info = missionPanelInfo();
+  if (info) {
+    el['mission-panel'].style.display = 'block';
+    el['mission-title'].textContent = info.title;
+    el['mission-stage'].textContent = info.stage;
+    el['mission-objective'].textContent = info.objective;
+    el['mission-next'].innerHTML = info.next ? '<span class="next-tag">NEXT</span> ' + info.next : '';
+    if (info.timer !== null && info.timer !== undefined) {
+      el['mission-timer'].style.display = 'block';
+      el['mission-timer'].textContent = fmtTimer(info.timer);
+      el['mission-timer'].classList.toggle('urgent', info.timer < 15);
+    } else el['mission-timer'].style.display = 'none';
+  } else {
+    el['mission-panel'].style.display = 'none';
+  }
+
+  // Weapons.
+  WEAPONS.forEach((w, i) => {
+    const slot = document.getElementById('weapon-' + i);
+    if (!slot) return;
+    const unlocked = G.unlocked[w.id];
+    slot.classList.toggle('active', G.weaponIndex === i);
+    slot.classList.toggle('locked', !unlocked);
+    const ammoEl = slot.querySelector('.wammo');
+    if (!unlocked) ammoEl.textContent = 'LOCKED';
+    else if (w.id === 'fists') ammoEl.textContent = '∞';
+    else ammoEl.textContent = String(G.ammo[w.id] ?? 0);
+  });
+
+  // Dispatch board (top five nearest units, unique ids by construction).
+  if (dispatch.length) {
+    el['dispatch'].style.display = 'block';
+    const rows = dispatch.slice()
+      .sort((a, b) => (a.dist ?? 999) - (b.dist ?? 999))
+      .slice(0, 5)
+      .map((d) => '<div class="drow"><span class="did">' + d.id + ' · ' + (d.dist ?? '—') + ' m</span>' +
+        '<span class="dstatus">' + d.status + '</span></div>')
+      .join('');
+    el['dispatch'].innerHTML = '<div class="dhead">PDP DISPATCH</div>' + rows;
+  } else el['dispatch'].style.display = 'none';
+
+  // Dialogue.
+  if (G.dialogue) {
+    const line = G.dialogue[G.dialogueIndex];
+    if (line) {
+      el['dialogue'].style.display = 'flex';
+      el['dialogue-name'].textContent = line.who.name;
+      el['dialogue-name'].style.color = line.who.color;
+      el['dialogue-text'].textContent = line.text;
+    }
+  } else el['dialogue'].style.display = 'none';
+
+  // Speedo.
+  if (G.playerCar) {
+    el['speedo'].style.display = 'block';
+    el['speedo'].innerHTML = Math.round(Math.abs(G.playerCar.speed) * 3.6) +
+      ' <span class="unit">km/h</span>';
+  } else el['speedo'].style.display = 'none';
+
+  // Maps: the hub overlay takes the screen and the in-game HUD hides so
+  // nothing ghosts through it (body.map-open CSS in index.html).
+  const overlay = el['mapOverlay'];
+  if (overlay) overlay.classList.toggle('open', G.mapOpen);
+  document.body.classList.toggle('map-open', G.mapOpen);
+  if (G.mapOpen && mapCanvas) {
+    mapTick -= dt;
+    if (mapTick <= 0) {
+      mapTick = 0.12;
+      drawFullMap(mapCanvas);
+      updateMapPanels();
+    }
+  } else if (cornerCanvas) drawCornerMinimap(cornerCanvas);
+
+  updateToasts(dt);
+  updateVignette();
+  if (G.pendingRankUp) {
+    G.pendingRankUp = false;
+    showBanner('RANK UP — ' + RANKS[G.rankIndex].toUpperCase(), 'Bahía Noche notices you now.');
+  }
 }

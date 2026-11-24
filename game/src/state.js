@@ -1,62 +1,52 @@
-// state.js — the single global game state object G, world bounds, ranks.
-// Every module reads/writes through G so the staged shots, the HUD and the
-// live game all see the same world.
+// state.js — the single game-state object G plus the weapon / rank tables.
+// Everything mutable lives here so saves, HUD and staging all read one truth.
 
-const WORLD = { minX: -300, maxX: 320, minZ: -340, maxZ: 340 };
-const LAND = { minX: -252, maxX: 300, minZ: -340, maxZ: 340 };
-
-const RANKS = [
-  { name: 'Nobody', respect: 0 },
-  { name: 'Runner', respect: 40 },
-  { name: 'Courier', respect: 150 },
-  { name: 'Fixer', respect: 400 },
-  { name: 'Baron', respect: 800 },
-  { name: 'King of the Noche', respect: 1500 },
+export const WEAPONS = [
+  { id: 'fists',  name: 'Fists',       damage: 9,  pellets: 1, range: 2.4, rate: 0.34, auto: false, spread: 0.0,   kick: 0.1 },
+  { id: 'p9',     name: 'P-9 Pistol',  damage: 17, pellets: 1, range: 62,  rate: 0.27, auto: false, spread: 0.012, kick: 0.35 },
+  { id: 'kobra',  name: 'Kobra SMG',   damage: 11, pellets: 1, range: 56,  rate: 0.09, auto: true,  spread: 0.032, kick: 0.22 },
+  { id: 'muelle', name: 'Muelle 12ga', damage: 9,  pellets: 6, range: 27,  rate: 0.85, auto: false, spread: 0.06,  kick: 0.9 },
 ];
 
-const G = {
-  // three.js handles (set by world.js / camera.js)
+export const RANKS = ['Runner', 'Courier', 'Wheelman', 'Fixer', 'Capo', 'Baron', 'Kingpin'];
+export const RANK_RESPECT = [0, 150, 350, 640, 1000, 1500, 2200];
+
+export const G = {
   scene: null, camera: null, renderer: null, canvas: null,
-  // clock
-  elapsed: 0, timeHours: 21.6, isDusk: true, night: true,
-  // run mode
-  shotMode: false, shotName: null, started: false, paused: false,
-  stageCam: null, camShake: 0,
-  // player vitals + economy
-  cash: 0, respect: 0, rankIndex: 0, health: 100, armor: 25,
-  wanted: 0, dead: false,
-  // weapons: unlocked + ammo live here; defs live in combat.js
-  weapons: {
-    fists: { unlocked: true, ammo: Infinity },
-    pistol: { unlocked: true, ammo: 60 },
-    smg: { unlocked: false, ammo: 0 },
-    shotgun: { unlocked: false, ammo: 0 },
-  },
-  weapon: 'pistol',
-  // entities
-  player: null, heli: null,
-  heliState: { orbitAngle: 0, forcedOrbit: null, forcedAltitude: null, active: false },
-  cars: [], peds: [], officers: [],
-  city: null, roadblock: null, heliSeesPlayer: false,
-  // mission + dialogue
-  mission: { index: 0, stage: 0, active: false, timerLeft: null, done: false },
-  dialogue: null,
-  // ui state
-  mapOpen: false, keys: {}, dispatch: [], district: '',
-  speedKmh: 0, radioOn: true,
-  // staging helpers
-  volley: false,
+  t: 0, hour: 21.6, isDusk: true, started: false, paused: false, over: false,
+  shotMode: false, shotName: '',
+  player: null, playerCar: null,
+  cash: 250, respect: 40, rankIndex: 0, pendingRankUp: false,
+  wanted: 0, wantedTimer: 0,
+  health: 100, armor: 0,
+  weaponIndex: 1,
+  unlocked: { fists: true, p9: true, kobra: false, muelle: false },
+  ammo: { p9: 60, kobra: 0, muelle: 0 },
+  speedKmh: 0, district: 'La Franja',
+  mapOpen: false, minimapPulse: 0,
+  mission: null, missionIndex: -1, stageIndex: 0, stageKind: '',
+  completed: [],
+  timerLeft: 0, objective: null, raceCheckpoints: null, raceCpIndex: 0,
+  dialogue: null, dialogueIndex: 0, dialogueDone: false,
+  heliSeesPlayer: false, heliActive: false,
+  toastQueue: [], camShake: 0,
+  kills: 0, faresDone: 0, racesWon: 0,
+  radio: 'Radio Noche 101.7', radioTrack: 'Neón Mojado — Costa Gris',
+  garageCars: ['voltgt'],
+  settings: { quality: 1 },
 };
 
-function rankFor(respect) {
-  let idx = 0;
-  for (let i = 0; i < RANKS.length; i++) if (respect >= RANKS[i].respect) idx = i;
-  return idx;
+export function currentWeapon() { return WEAPONS[G.weaponIndex]; }
+
+export function rankForRespect(respect) {
+  let r = 0;
+  for (let i = 0; i < RANK_RESPECT.length; i++) if (respect >= RANK_RESPECT[i]) r = i;
+  return r;
 }
-function districtAt(x, z) {
-  if (!G.city) return '';
-  for (const d of G.city.districts) {
-    if (x >= d.minX && x <= d.maxX && z >= d.minZ && z <= d.maxZ) return d.name;
-  }
-  return '';
+
+export function addRespect(n) {
+  G.respect += n;
+  const r = rankForRespect(G.respect);
+  if (r > G.rankIndex) { G.rankIndex = r; G.pendingRankUp = true; }
 }
+export function addCash(n) { G.cash = Math.max(0, G.cash + n); }

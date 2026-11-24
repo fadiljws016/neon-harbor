@@ -1,41 +1,48 @@
 # Neon Harbor
 
-[![make.fun bounty](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
-[![rank](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/rank.svg)](https://make.fun/bounty/gta6-01)
-[![reward](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/reward.svg)](https://make.fun/bounty/gta6-01)
+![make.fun bounty](https://make.fun/badge/gta6-01.svg)
+![rank](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/rank.svg)
+![reward](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/reward.svg)
 
-An original open-world crime game set in **Bahía Noche**, a rain-slick neon
-port city that never sees daylight. You are Rocco "Rayo" Vidal, a dock
-courier running packages for Madame Volt of Club Sirena — while Bruno the
-crane boss, the mysterious La Sombra, and the Policía del Puerto (with
-their LUCERO-1 searchlight helicopter) all close in on the harbour.
+**Neon Harbor** is an original open-world crime game set in **Bahía Noche**, a
+rain-slick neon port city at night. You are Rocco "Rayo" Vidal — cyan jacket,
+fast hands, faster debts — running jobs for Madame Volt of Club Sirena while
+the Policía del Puerto (PDP) and their air unit **LUCERO-1** hunt you under
+the neon.
 
-Eight story jobs — cargo runs, a strip race, a shipyard ambush, night
-fares, warehouse takedowns, a stolen police cruiser, a blackout run and a
-final stand under the cranes — across six districts, with a wanted system,
-pursuit AI, a live dispatch feed, a painted city map with real routed
-navigation, and a full day-one arsenal: fists, the P-9 Pistol, the Kobra
-SMG and the Muelle 12ga.
+Built by an AI agent for make.fun's "Make GTA 6" bounty (gta6-01).
 
-## Districts
+## The city
 
-- **Muelle Neón** — the west waterfront: quay, marina berths, the garage
-- **La Franja** — the neon strip: Club Sirena, Bar Órbita, Hotel Luna
-- **Mercado Nocturno** — the night market sheds of the north-east
-- **El Astillero** — the south docks: container yard and gantry cranes
-- **Isla Faro** — the lighthouse point
-- **Alto Mirador** — the eastern heights
+Six districts tile Bahía Noche: **Muelle Neón** (the waterfront boulevard),
+**Isla Faro** (the lighthouse island quarter), **La Franja** (Volt's home
+strip and its night market), **Mercado Nocturno**, **Alto Mirador**, and
+**El Astillero** (the container shipyard). A full city map (M) draws a real
+Dijkstra route over the road grid to your objective, with a live metre pill.
+
+## The jobs
+
+Eight missions: *Midnight Cargo*, *Strip Run*, *Shipyard Ambush*,
+*Rain Check*, *Warehouse Kings*, *Sirena's Debt*, *Blackout*, and
+*Lucero Down* — go-tos, car thefts and deliveries, timed runs, a checkpoint
+race, fares, ambush fights, takedowns and escapes, all driven by one stage
+engine with a live mission panel and dispatch board.
 
 ## Controls
 
-- **WASD** — move / drive · **Shift** — run
-- **E** — talk, enter/exit a car, work a job point
-- **Mouse click** — fire · **1–4** — weapon slots
-- **M / ESC** — full city map
+- **WASD** — move / drive · **Mouse** — aim · **Click** — shoot
+- **E** — enter/exit car, advance dialogue · **Shift** — sprint
+- **M** — city map · **1–4** — weapons (Fists, P-9 Pistol, Kobra SMG, Muelle 12ga)
+- **Esc / P** — pause
 
 ## Running it
 
-Open `game/index.html` in a desktop browser — everything is static and
-self-contained (Three.js is vendored; there are no network requests).
-`main.ts` is the make.fun entry builder: it copies `game/` and
-`screenshots/` into `MAKEFUN_OUTPUT_DIR` and writes the dossier.
+Open `game/index.html` from any static host, or `node serve.ts` and visit
+http://localhost:8080. `node main.ts` packages the entry (copies `game/` and
+`screenshots/` into the output directory and writes `dossier.json`).
+
+## Tech
+
+Three.js (vendored, UMD) for rendering; everything else — city generation,
+traffic, police AI, combat, missions, minimap routing, synthesized audio —
+is hand-written JavaScript with no build step and no network calls.

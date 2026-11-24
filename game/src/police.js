@@ -1,110 +1,101 @@
-// police.js — the PDP response: wanted level, pursuit cruisers, foot
-// backup, the dispatch feed the HUD shows, and roadblock construction for
-// the chase staging.
+// police.js — PDP pursuit cars and the dispatch board. Every unit carries
+// a UNIQUE id (CAR-###) — the round-1 build listed the same unit twice
+// and the owner noticed; never again.
 
-let policeTimer = 0;
-function addWanted(v) {
-  G.wanted = clamp(G.wanted + v, 0, 5);
-}
-function wantedStars() {
-  return Math.floor(G.wanted + 0.001);
-}
-function spawnPursuitCruiser() {
-  const p = G.player.fig.position;
-  const a = rng() * Math.PI * 2;
-  const x = clamp(p.x + Math.sin(a) * rand(46, 60), LAND.minX + 8, LAND.maxX - 8);
-  const z = clamp(p.z + Math.cos(a) * rand(46, 60), LAND.minZ + 8, LAND.maxZ - 8);
-  const snap = nearestRoadSnap(x, z);
-  const car = spawnCar('cruiser', snap.x, snap.z, Math.atan2(p.x - snap.x, p.z - snap.z), 0xf2f2f2,
-    { ai: 'pursue' });
-  car.unit = 'UNIT-' + randi(100, 199);
+import { G } from './state.js';
+import { clamp, dist2d, angleTo, angleDiff } from './util.js';
+import { makeCar, placeCar, driveStep, collideCar } from './vehicles.js';
+import { nearestRoadPoint } from './city.js';
+import { allCars } from './traffic.js';
+
+export const policeCars = [];
+export const dispatch = [];
+let carUnitSeq = 161; // CAR-161 upward, roadblocks and pursuers alike
+
+export function nextCarUnit() { return 'CAR-' + (carUnitSeq++); }
+
+export function spawnPoliceCar(x, z, angle = 0, role = 'pursuit') {
+  const car = makeCar('cruiser', undefined, { detail: true });
+  placeCar(car, x, z, angle);
+  car.unit = nextCarUnit();
+  car.role = role;
+  car.speed = 0;
+  G.scene.add(car.group);
+  policeCars.push(car);
+  dispatch.push({ id: car.unit, kind: 'car', ref: car, status: role === 'roadblock' ? 'BLOCKING' : 'PURSUIT' });
   return car;
 }
-function nearestRoadSnap(x, z) {
-  let bx = x, bz = z, bd = Infinity;
-  for (const rx of ROADS_X) { const d = Math.abs(rx - x); if (d < bd) { bd = d; bx = rx; bz = z; } }
-  for (const rz of ROADS_Z) { const d = Math.abs(rz - z); if (d < bd) { bd = d; bx = x; bz = rz; } }
-  return { x: bx, z: bz };
+
+export function clearPolice() {
+  for (const c of policeCars) G.scene.remove(c.group);
+  policeCars.length = 0;
+  dispatch.length = 0;
 }
-function updatePolice(dt) {
-  if (!G.started || G.shotMode || G.dead) { refreshDispatch(); return; }
-  policeTimer -= dt;
-  // heat cools slowly when the heli has lost you
-  if (!G.heliSeesPlayer && G.wanted > 0) G.wanted = Math.max(0, G.wanted - dt * 0.02);
-  const cruisers = G.cars.filter(c => c.type === 'cruiser' && !c.dead && c.ai === 'pursue');
-  const wantCruisers = G.wanted >= 1 ? Math.min(1 + Math.floor(G.wanted), 5) : 0;
-  if (policeTimer <= 0) {
-    policeTimer = 1.2;
-    if (cruisers.length < wantCruisers) spawnPursuitCruiser();
-    if (G.wanted >= 2 && G.officers.filter(o => !o.dead).length < Math.floor(G.wanted) && chance(0.6)) {
-      const p = G.player.fig.position;
-      const a = rng() * Math.PI * 2;
-      spawnOfficerAt(clamp(p.x + Math.sin(a) * 24, LAND.minX, LAND.maxX),
-        clamp(p.z + Math.cos(a) * 24, LAND.minZ, LAND.maxZ), { phase: 'advance' });
+
+export function desiredPoliceCount() {
+  if (G.wanted < 1) return 0;
+  if (G.wanted < 2) return 1;
+  if (G.wanted < 3) return 2;
+  if (G.wanted < 4) return 3;
+  return 4;
+}
+
+function spawnNearPlayer() {
+  const p = G.playerCar ? G.playerCar.group.position : G.player.group.position;
+  const a = Math.random() * Math.PI * 2;
+  const near = nearestRoadPoint(p.x + Math.sin(a) * 55, p.z + Math.cos(a) * 55);
+  return spawnPoliceCar(near.x, near.z, Math.random() * Math.PI * 2, 'pursuit');
+}
+
+export function updatePolice(dt) {
+  // Wanted decay: lie low and the heat bleeds off.
+  if (!G.shotMode && G.wanted > 0 && G.t - (G.lastHurtT || -99) > 14) {
+    G.wanted = Math.max(0, G.wanted - dt * 0.03);
+  }
+  G.heliActive = G.wanted >= 3;
+  const want = G.shotMode ? policeCars.length : desiredPoliceCount();
+  const pursuers = policeCars.filter((c) => c.role === 'pursuit' && !c.dead);
+  if (!G.shotMode && pursuers.length < want && G.player) {
+    if (Math.random() < dt * 0.7) spawnNearPlayer();
+  }
+  const target = G.playerCar ? G.playerCar.group.position
+    : (G.player ? G.player.group.position : null);
+  if (!target) return;
+  for (const car of policeCars) {
+    if (car.dead) continue;
+    if (car.group.userData.lightBar) {
+      const bar = car.group.userData.lightBar;
+      bar.children[0].material.color.setHex(G.t % 0.5 < 0.25 ? 0xff5050 : 0x551114);
+      bar.children[1].material.color.setHex(G.t % 0.5 < 0.25 ? 0x112a55 : 0x4d8dff);
+    }
+    if (car.role === 'roadblock') continue;
+    const d = dist2d(car.x, car.z, target.x, target.z);
+    const desired = angleTo(car.x, car.z, target.x, target.z);
+    const diff = angleDiff(car.angle, desired);
+    const steer = clamp(diff * 1.6, -0.62, 0.62);
+    let throttle = 0;
+    if (d > 9) throttle = 1;
+    else if (d > 4.5) throttle = 0.45;
+    else throttle = -0.4;
+    if (Math.abs(diff) > 2.4 && d < 12) throttle = -0.8;
+    driveStep(car, dt, throttle, steer);
+    // Pursuers are solid too: walls and parked cars stop a chase cold.
+    // (Their own fleet-mates are in the list — cruisers shove each other
+    // out of overlaps instead of stacking inside one another.)
+    const obstacles = allCars().concat(policeCars);
+    if (G.stageCar && G.stageCar !== car) obstacles.push(G.stageCar);
+    if (G.playerCar && G.playerCar !== car) obstacles.push(G.playerCar);
+    collideCar(car, obstacles, 0.5);
+    // Ram pressure: nudge the player's car on contact.
+    if (G.playerCar && d < 3.4 && !G.playerCar.dead) {
+      G.playerCar.speed *= (1 - dt * 1.4);
     }
   }
-  // pursuit driving: chase the player, ram when close
-  const pp = G.player.fig.position;
-  for (const car of cruisers) {
-    const cp = car.mesh.position;
-    const d = dist2(cp.x, cp.z, pp.x, pp.z);
-    const targetH = Math.atan2(pp.x - cp.x, pp.z - cp.z);
-    car.heading = angLerp(car.heading, targetH, dt * 1.6);
-    const top = CAR_TYPES.cruiser.top * (d > 30 ? 1 : 0.72);
-    car.speed = lerp(car.speed, top, dt * 0.8);
-    cp.x += fwdX(car.heading) * car.speed * dt;
-    cp.z += fwdZ(car.heading) * car.speed * dt;
-    car.mesh.rotation.y = car.heading;
-    collideCarWithCars(car);
+  // Refresh dispatch distances/status.
+  for (const entry of dispatch) {
+    if (entry.kind !== 'car') continue;
+    const c = entry.ref;
+    entry.dist = Math.round(dist2d(c.x, c.z, target.x, target.z));
+    if (c.dead) entry.status = 'DISABLED';
   }
-  refreshDispatch();
-}
-function refreshDispatch() {
-  const rows = [];
-  if (!G.player) { G.dispatch = rows; return; }
-  const pp = G.player.fig.position;
-  for (const car of G.cars) {
-    if (car.type !== 'cruiser' || car.dead) continue;
-    const cp = car.mesh.position;
-    const d = Math.round(dist2(cp.x, cp.z, pp.x, pp.z));
-    const unitNum = parseInt((car.unit || 'UNIT-100').replace(/\D/g, ''), 10) || 100;
-    const role = d < 14 ? 'RAM' : (car.ai === 'block' ? 'BLOCK' : (unitNum % 2 ? 'FLANK' : 'PURSUIT'));
-    rows.push({ unit: car.unit || 'UNIT-100', dist: d, role });
-  }
-  for (const o of G.officers) {
-    if (o.dead) continue;
-    const op = o.fig.position;
-    rows.push({
-      unit: o.id, dist: Math.round(dist2(op.x, op.z, pp.x, pp.z)),
-      role: o.phase === 'crouch' ? 'COVER' : 'ENGAGING',
-    });
-  }
-  if (G.heliState.active) rows.push({ unit: 'LUCERO-1', dist: null, role: 'ACTIVE' });
-  rows.sort((a, b) => (a.dist === null ? 9999 : a.dist) - (b.dist === null ? 9999 : b.dist));
-  G.dispatch = rows.slice(0, 6);
-}
-// Roadblock: two cruisers angled across the boulevard + a spike strip line.
-function buildRoadblockMeshes(x, z) {
-  clearRoadblock();
-  const grp = new THREE.Group();
-  const c1 = spawnCar('cruiser', x - 3.4, z, Math.PI / 2 + 0.35, 0xf2f2f2, { parked: true, ai: 'block' });
-  const c2 = spawnCar('cruiser', x + 3.6, z - 1.5, Math.PI / 2 - 0.3, 0xf2f2f2, { parked: true, ai: 'block' });
-  c1.unit = 'UNIT-167'; c2.unit = 'UNIT-168';
-  const barrierMat = new THREE.MeshLambertMaterial({ color: 0xd8dde6 });
-  const stripeMat = new THREE.MeshBasicMaterial({ color: 0xff7847 });
-  for (let i = -1; i <= 1; i++) {
-    const b = box(2.2, 0.85, 0.5, 0, x + i * 3.4, 0.43, z + 2.6, { mat: barrierMat });
-    grp.add(b);
-    const s = box(2.2, 0.2, 0.52, 0, x + i * 3.4, 0.62, z + 2.6, { mat: stripeMat });
-    grp.add(s);
-  }
-  G.scene.add(grp);
-  G.roadblock = { x, z, group: grp, cars: [c1, c2] };
-  return G.roadblock;
-}
-function clearRoadblock() {
-  if (!G.roadblock) return;
-  G.scene.remove(G.roadblock.group);
-  for (const c of G.roadblock.cars) removeCar(c);
-  G.roadblock = null;
 }

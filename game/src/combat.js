@@ -1,132 +1,222 @@
-// combat.js — hitscan gunplay on the proven effects recipe. Every shot:
-// muzzle smoke x1, impact dust x2, one short tracer dash, one star flash,
-// brass over the shoulder. Damage falls on officers, cars, the player.
+// combat.js — hitscan gunfire for everyone in Bahía Noche. One fireAt()
+// renders the shot (locked Bahia FX recipe via effects.js) and resolves
+// the hit; hostiles think in cover, advance and volley states.
 
-const WEAPON_DEFS = {
-  fists: { name: 'Fists', interval: 0.42, damage: 9, range: 2.1, spread: 0, auto: false },
-  pistol: { name: 'P-9 Pistol', interval: 0.34, damage: 22, range: 70, spread: 0.02, auto: false },
-  smg: { name: 'Kobra SMG', interval: 0.095, damage: 13, range: 60, spread: 0.05, auto: true },
-  shotgun: { name: 'Muelle 12ga', interval: 0.85, damage: 11, range: 34, spread: 0.11, auto: false, pellets: 6 },
-};
-const WEAPON_ORDER = ['fists', 'pistol', 'smg', 'shotgun'];
+import { G, currentWeapon, addRespect } from './state.js';
+import { clamp, rand, dist2d, angleTo, angleLerp } from './util.js';
+import { makePerson, poseAim, poseCrouch, poseDown, animatePerson } from './people.js';
+import { fireFx, burst } from './effects.js';
+import { sfxShot } from './audio.js';
+import { peds, woundPed } from './pedestrians.js';
+import { officers, hurtOfficer } from './officers.js';
+import { collideWorld } from './player.js';
 
-function muzzlePos(x, y, z, heading) {
-  return { x: x + fwdX(heading) * 0.55, y, z: z + fwdZ(heading) * 0.55 };
+export const hostiles = [];
+let hostileSeq = 1;
+
+export function gunPosOf(person) {
+  const p = person.group.position;
+  return { x: p.x + Math.sin(person.group.rotation.y) * 0.4, y: 1.32, z: p.z + Math.cos(person.group.rotation.y) * 0.4 };
 }
-// Generic shot: from a point toward a target point, with spread + damage
-// applied to whatever the ray meets (officers / player / cars).
-function fireShotAt(kind, fx, fy, fz, tx, ty, tz, opts) {
-  opts = opts || {};
-  const spread = opts.spread || 0;
-  const dx = tx - fx + rand(-spread, spread) * 10;
-  const dy = ty - fy + rand(-spread, spread) * 4;
-  const dz = tz - fz + rand(-spread, spread) * 10;
-  const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-  const ux = dx / len, uy = dy / len, uz = dz / len;
-  // find the nearest victim along the ray
-  let bestT = len, victim = null;
-  function testPoint(px, py, pz, r, ref) {
-    const ox = px - fx, oy = py - fy, oz = pz - fz;
-    const t = ox * ux + oy * uy + oz * uz;
-    if (t < 0.5 || t > bestT) return;
-    const cx = fx + ux * t, cy = fy + uy * t, cz = fz + uz * t;
-    const d = Math.sqrt((px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2);
-    if (d < r) { bestT = t; victim = ref; }
-  }
-  if (kind !== 'officer') {
-    for (const o of G.officers) {
-      if (o.dead) continue;
-      const p = o.fig.position;
-      testPoint(p.x, 1.1, p.z, 0.62, { type: 'officer', ref: o });
-    }
-  }
-  if (kind !== 'player' && G.player && !G.player.car) {
-    const p = G.player.fig.position;
-    testPoint(p.x, 1.1, p.z, 0.58, { type: 'player' });
-  }
-  for (const car of G.cars) {
-    if (car.dead) continue;
-    const p = car.mesh.position;
-    testPoint(p.x, 0.8, p.z, Math.max(CAR_TYPES[car.type].W, CAR_TYPES[car.type].L) * 0.42, { type: 'car', ref: car });
-  }
-  const hx = fx + ux * bestT, hy = Math.max(0.15, fy + uy * bestT), hz = fz + uz * bestT;
-  // the recipe, exactly: smoke at the muzzle, dash mid-flight, dust at hit
-  burstSmoke(fx, fy, fz, 0x8a7f70, 1, { life: 1.1, rise: 0.55, power: 0.3 });
-  spawnTracer(fx, fy, fz, hx, hy, hz);
-  muzzleFlash(fx, fy, fz);
-  impactDust(hx, hy, hz);
-  const dmg = opts.damage || 10;
-  if (victim) {
-    if (victim.type === 'officer') { damageOfficer(victim.ref, dmg); burst(hx, hy, hz, 0xff5a4e, 4, 1.6, {}); }
-    else if (victim.type === 'player') damagePlayer(dmg * 0.6);
-    else if (victim.type === 'car') damageCar(victim.ref, dmg * 0.8);
-  }
-  if (typeof audioShot === 'function') audioShot(kind);
-  return victim;
+
+// Render + resolve one shot. hit: null | {kind:'player'|'hostile'|'ped'|'car', ref, point}
+export function fireAt(shooter, from, to, opts = {}) {
+  const spread = opts.spread ?? 0.02;
+  const hx = to.x + (Math.random() - 0.5) * 2 * spread * 30;
+  const hy = Math.max(0.15, to.y + (Math.random() - 0.5) * spread * 22);
+  const hz = to.z + (Math.random() - 0.5) * 2 * spread * 30;
+  fireFx(from.x, from.y, from.z, hx, hy, hz, !!opts.hitSomething);
+  if (opts.onHit) opts.onHit({ x: hx, y: hy, z: hz });
+  return { x: hx, y: hy, z: hz };
 }
-let playerFireTimer = 0;
-function playerShoot(dt, mouseDown) {
-  playerFireTimer -= dt;
-  const player = G.player;
-  if (!player || G.dead || G.dialogue || G.mapOpen) return;
-  const w = G.weapon;
-  const def = WEAPON_DEFS[w];
-  if (!def || w === 'fists') return;
-  if (!mouseDown || playerFireTimer > 0) return;
-  const slot = G.weapons[w];
-  if (!slot.unlocked) return;
-  if (slot.ammo !== Infinity && slot.ammo <= 0) return;
-  playerFireTimer = def.interval;
-  if (slot.ammo !== Infinity) slot.ammo -= 1;
-  const pp = player.fig.position;
-  let heading = player.heading;
-  let baseY = 1.32;
-  let ox = pp.x, oz = pp.z;
-  if (player.car) {
-    heading = player.car.heading;
-    ox = player.car.mesh.position.x; oz = player.car.mesh.position.z;
-    baseY = 1.1;
+
+export function hurtPlayer(damage) {
+  if (G.over || G.shotMode) return;
+  let d = damage;
+  if (G.armor > 0) {
+    const absorbed = Math.min(G.armor, d * 0.6);
+    G.armor -= absorbed;
+    d -= absorbed;
   }
-  const mp = muzzlePos(ox, baseY, oz, heading);
-  const pellets = def.pellets || 1;
-  for (let i = 0; i < pellets; i++) {
-    fireShotAt('player', mp.x, mp.y, mp.z,
-      mp.x + fwdX(heading) * def.range, baseY + rand(-0.1, 0.35), mp.z + fwdZ(heading) * def.range,
-      { spread: def.spread, damage: def.damage });
+  G.health -= d;
+  G.lastHurtT = G.t;
+  if (G.health <= 0) {
+    G.health = 0;
+    G.over = true;
+    if (G.player) poseDown(G.player.person);
   }
-  ejectCasing(mp.x, mp.y, mp.z, heading);
-  applyPose(player.fig, 'fire');
-  player.pose = 'fire';
-  setTimeout(() => { if (G.player && G.player.pose === 'fire' && !G.player.car) { applyPose(G.player.fig, 'stand'); G.player.pose = 'stand'; } }, 240);
-  if (!G.shotMode) addWanted(0.25);
 }
-function explodeCar(car) { damageCar(car, 200); }
-function updateCombat(dt) {
-  // handled through playerShoot (input) + officer timers; kept as a hook
-  // for staged volleys so the shutter always catches an exchange.
-  if (G.volley && G.player) {
-    // the red-shirt ally + staged officers trade fire continuously;
-    // officers shoot via updateOfficers, the ally via his ped record.
-    for (const ped of G.peds) {
-      if (ped.mode !== 'ally') continue;
-      ped.fireTimer = (ped.fireTimer || rand(0.2, 0.5)) - dt;
-      if (ped.fireTimer <= 0) {
-        ped.fireTimer = WEAPON_DEFS.smg.interval * rand(2.4, 4.2);
-        const p = ped.fig.position;
-        // aim at the nearest living officer
-        let tgt = null, bd = Infinity;
-        for (const o of G.officers) {
-          if (o.dead) continue;
-          const d = dist2(p.x, p.z, o.fig.position.x, o.fig.position.z);
-          if (d < bd) { bd = d; tgt = o; }
-        }
-        if (tgt) {
-          ped.fig.rotation.y = Math.atan2(tgt.fig.position.x - p.x, tgt.fig.position.z - p.z);
-          const mp = muzzlePos(p.x, 1.32, p.z, ped.fig.rotation.y);
-          fireShotAt('ally', mp.x, mp.y, mp.z, tgt.fig.position.x, 1.15, tgt.fig.position.z, { spread: 0.08, damage: 5 });
-          ejectCasing(mp.x, mp.y, mp.z, ped.fig.rotation.y);
-        }
+
+export function hurtPed(ped, damage, shooter) {
+  woundPed(ped, damage, shooter);
+}
+
+export function spawnHostile(x, z, opts = {}) {
+  const person = makePerson({
+    shirt: opts.shirt ?? 0xd84a30, pants: 0x23262e,
+    gun: opts.gun ?? 'pistol', pattern: 'plain',
+    cap: opts.cap,
+  });
+  person.group.position.set(x, 0, z);
+  G.scene.add(person.group);
+  const h = {
+    id: hostileSeq++, person, group: person.group,
+    health: opts.health ?? 55, dead: false,
+    state: 'advance', fireCd: rand(0.4, 1.4),
+    coverT: 0, coverX: x, coverZ: z, homeX: x, homeZ: z,
+    damage: opts.damage ?? 7, range: opts.range ?? 34,
+    ally: !!opts.ally, name: opts.name || 'hostile',
+  };
+  poseAim(person);
+  hostiles.push(h);
+  return h;
+}
+
+export function clearHostiles() {
+  for (const h of hostiles) G.scene.remove(h.group);
+  hostiles.length = 0;
+}
+
+function hurtHostile(h, dmg) {
+  if (h.dead) return;
+  h.health -= dmg;
+  burst(h.group.position.x, 1.2, h.group.position.z, 0xd84040, 4, 1.4, { life: 0.5 });
+  if (h.health <= 0) {
+    h.dead = true;
+    poseDown(h.person);
+    if (!h.ally) { G.kills++; addRespect(6); }
+  }
+}
+
+export function playerShoot(targetPoint) {
+  const p = G.player;
+  if (!p || p.dead) return;
+  const w = currentWeapon();
+  const pos = p.group.position;
+  if (w.id !== 'fists' && G.ammo[w.id] !== undefined) {
+    if (G.ammo[w.id] <= 0) return;
+    G.ammo[w.id]--;
+  }
+  sfxShot(w.id === 'muelle' ? 'shotgun' : 'pistol');
+  const from = gunPosOf(p.person);
+  if (w.id === 'fists') {
+    // A swing: anything hostile within arm's reach regrets it.
+    for (const h of hostiles) {
+      if (!h.dead && dist2d(pos.x, pos.z, h.group.position.x, h.group.position.z) < w.range) {
+        hurtHostile(h, w.damage);
       }
     }
+    return;
+  }
+  if (!targetPoint) return;
+  for (let pellet = 0; pellet < w.pellets; pellet++) {
+    // Find what the pellet actually meets: nearest hostile / ped / officer
+    // within a metre-and-a-half of the aim line's end.
+    let bestH = null, bestD = 2.2;
+    for (const h of hostiles) {
+      if (h.dead) continue;
+      const hp = h.group.position;
+      const d = dist2d(targetPoint.x, targetPoint.z, hp.x, hp.z);
+      const rangeOk = dist2d(pos.x, pos.z, hp.x, hp.z) <= w.range;
+      if (rangeOk && d < bestD) { bestD = d; bestH = h; }
+    }
+    let bestPed = null; bestD = 2.2;
+    for (const ped of peds) {
+      if (ped.dead || ped.wounded) continue;
+      const pp = ped.group.position;
+      const d = dist2d(targetPoint.x, targetPoint.z, pp.x, pp.z);
+      if (dist2d(pos.x, pos.z, pp.x, pp.z) <= w.range && d < bestD) { bestD = d; bestPed = ped; }
+    }
+    let bestOff = null; bestD = 2.2;
+    for (const o of officers) {
+      if (o.dead) continue;
+      const op = o.group.position;
+      const d = dist2d(targetPoint.x, targetPoint.z, op.x, op.z);
+      if (dist2d(pos.x, pos.z, op.x, op.z) <= w.range && d < bestD) { bestD = d; bestOff = o; }
+    }
+    const to = bestH ? { x: bestH.group.position.x, y: 1.15, z: bestH.group.position.z }
+      : bestOff ? { x: bestOff.group.position.x, y: 1.15, z: bestOff.group.position.z }
+      : bestPed ? { x: bestPed.group.position.x, y: 1.15, z: bestPed.group.position.z }
+      : targetPoint;
+    fireAt('player', from, to, {
+      spread: w.spread, hitSomething: !!(bestH || bestPed || bestOff),
+      onHit: () => {
+        if (bestH) hurtHostile(bestH, w.damage);
+        else if (bestOff) { hurtOfficer(bestOff, w.damage); G.wanted = Math.min(5, G.wanted + 0.5); }
+        else if (bestPed) { hurtPed(bestPed, w.damage, 'player'); G.wanted = Math.min(5, G.wanted + 0.6); }
+      },
+    });
+  }
+  if (!G.shotMode) G.wanted = Math.min(5, G.wanted + 0.12);
+}
+
+// Hostile fire control: volleys at the player (or at the player's ally
+// line) with distance-based accuracy. Damage lands probabilistically so a
+// staged crossfire reads as lethal without being a guaranteed kill.
+export function hostileFire(h, dt, targetPos) {
+  h.fireCd -= dt;
+  if (h.fireCd > 0) return;
+  const hp = h.group.position;
+  const d = dist2d(hp.x, hp.z, targetPos.x, targetPos.z);
+  if (d > h.range) return;
+  h.fireCd = rand(0.55, 1.15);
+  const from = gunPosOf(h.person);
+  const hitChance = clamp(0.62 - d * 0.011, 0.12, 0.55);
+  const willHit = Math.random() < hitChance;
+  sfxShot('pistol');
+  fireAt('hostile', from, { x: targetPos.x, y: 1.2, z: targetPos.z }, {
+    spread: willHit ? 0.004 : 0.05, hitSomething: true,
+    onHit: () => { if (willHit && !h.ally) hurtPlayer(h.damage); },
+  });
+}
+
+export function updateHostileCover(dt) {
+  // Hostiles shuffle between cover points near their home when the player
+  // is close and they are not advancing.
+  for (const h of hostiles) {
+    if (h.dead) continue;
+    h.coverT -= dt;
+    if (h.coverT <= 0) {
+      h.coverT = rand(2.2, 4.5);
+      const a = Math.random() * Math.PI * 2;
+      const r = rand(1.5, 5);
+      h.coverX = h.homeX + Math.cos(a) * r;
+      h.coverZ = h.homeZ + Math.sin(a) * r;
+      h.state = Math.random() < 0.45 ? 'cover' : 'advance';
+    }
+  }
+}
+
+export function updateHostiles(dt) {
+  updateHostileCover(dt);
+  const p = G.player;
+  if (!p) return;
+  const targetPos = G.playerCar ? G.playerCar.group.position : p.group.position;
+  for (const h of hostiles) {
+    if (h.dead) { continue; }
+    const hp = h.group.position;
+    const d = dist2d(hp.x, hp.z, targetPos.x, targetPos.z);
+    h.group.rotation.y = angleLerp(h.group.rotation.y, angleTo(hp.x, hp.z, targetPos.x, targetPos.z), Math.min(1, dt * 6));
+    let mvx = 0, mvz = 0;
+    if (h.state === 'advance' && d > 11) {
+      mvx = Math.sin(h.group.rotation.y) * 2.6;
+      mvz = Math.cos(h.group.rotation.y) * 2.6;
+    } else if (h.state === 'cover') {
+      const cd = dist2d(hp.x, hp.z, h.coverX, h.coverZ);
+      if (cd > 0.7) {
+        const ca = angleTo(hp.x, hp.z, h.coverX, h.coverZ);
+        mvx = Math.sin(ca) * 2.2; mvz = Math.cos(ca) * 2.2;
+      }
+    }
+    if (mvx || mvz) {
+      hp.x += mvx * dt; hp.z += mvz * dt;
+      collideWorld(hp, 0.42);
+      poseAim(h.person);
+      animatePerson(h.person, dt, 2.4);
+    } else {
+      if (d < 13) poseCrouch(h.person); else poseAim(h.person);
+      animatePerson(h.person, dt, 0);
+    }
+    if (!h.ally) hostileFire(h, dt, targetPos);
   }
 }
