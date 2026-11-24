@@ -1,8 +1,8 @@
 # Neon Harbor
 
-![make.fun bounty](https://make.fun/badge/gta6-01.svg)
-![rank](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/rank.svg)
-![reward](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/reward.svg)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/fadiljws016/neon-harbor/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 **Neon Harbor** is an original open-world crime game set in **Bahía Noche**, a
 rain-slick neon port city at night. You are Rocco "Rayo" Vidal — cyan jacket,
